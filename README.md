@@ -57,14 +57,10 @@ For full architectural context on the SGLang shadow cache integration, see [ADR-
 
 ## Current Status
 
-ASH-KV is currently integrated with **SGLang** and validated on NVIDIA T4.
+ASH-KV is currently integrated with **SGLang** - Validating in colab/kaggle ( T4 ).
 
 - **Codecs:** BF16 (identity), INT8 (Triton, per-token scaling, autotuned).
 - **Integration:** SGLang `RadixCache` proxy patch. Atomic `promote_hook` and `demote_hook` intercept preemptions at the node level to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
-
-### Validated on
-- **NVIDIA A100** (Target deployment)
-- **NVIDIA T4** (Colab/Kaggle testing)
 
 ---
 
@@ -98,7 +94,7 @@ python3 -m sglang.bench_serving --backend sglang --num-prompts 32
 Tune the 8 numbers via a simple YAML file:
 
 ```yaml
-# qwen_2xa100_config.yaml
+# config.yaml
 policy:
   w_T: 0.7
   w_S: 0.1
