@@ -169,6 +169,7 @@ class INT8Codec:
         int8_vals = torch.empty((num_tokens, self._hidden_dim), dtype=torch.int8, device="cuda")
 
         # The autotuner handles BLOCK_SIZE now.
+        grid = (num_tokens,)
         encode_kernel[grid](
             arr_gpu,
             int8_vals,
@@ -210,6 +211,7 @@ class INT8Codec:
         bf16_vals = torch.empty((num_tokens, self._hidden_dim), dtype=torch.float16, device="cuda")
 
         # The autotuner handles BLOCK_SIZE now.
+        grid = (num_tokens,)
         decode_kernel[grid](
             int8_vals,
             scale_factors,
