@@ -129,7 +129,7 @@ class INT8Codec:
         import torch
         encode_kernel, _ = _get_kernels()
 
-        arr = torch.frombuffer(source_bytes, dtype=torch.float16)
+        arr = torch.frombuffer(bytearray(source_bytes), dtype=torch.float16)
         num_tokens = len(arr) // self._hidden_dim
         if num_tokens == 0:
             return struct.pack("<I", 0)
@@ -174,11 +174,11 @@ class INT8Codec:
         int8_size = num_tokens * self._hidden_dim
 
         scale_factors = torch.frombuffer(
-            target_bytes[4:4 + scale_size], dtype=torch.float16
+            bytearray(target_bytes[4:4 + scale_size]), dtype=torch.float16
         ).cuda()
         
         int8_vals = torch.frombuffer(
-            target_bytes[4 + scale_size:4 + scale_size + int8_size],
+            bytearray(target_bytes[4 + scale_size:4 + scale_size + int8_size]),
             dtype=torch.int8,
         ).view(num_tokens, self._hidden_dim).cuda()
 
