@@ -1,0 +1,46 @@
+# ASH-KV Dependencies
+#
+# Install ONLY what you need for your current phase.
+# Don't install everything upfront — it's a waste of disk and time.
+#
+# === Phase 1: Core (run tests, use contracts/runtime/safety) ===
+# Required for: tests, the architecture I built
+# Runs on: laptop, no GPU needed
+numpy>=1.24,<3.0
+pytest>=8.0
+
+# === Phase 2: Codecs on T4 (Kaggle/Colab) ===
+# Required for: writing the INT8 Triton kernel
+# Install: pip install torch triton --index-url https://download.pytorch.org/whl/cu121
+# (PyTorch is usually pre-installed on Kaggle/Colab — just add triton)
+# torch>=2.1
+# triton>=2.0
+
+# === Phase 3: Codecs on MI300X (AMD credits) ===
+# Required for: FP8 and INT4 kernels on AMD hardware
+# Install: pip install torch triton --index-url https://download.pytorch.org/whl/rocm6.1
+# torch>=2.4 (ROCm build)
+# triton>=2.0
+
+# === Phase 4: SGLang integration (customer cluster) ===
+# Required for: wiring ASH-KV into SGLang, serving real models
+# Install: pip install "sglang[all]" flashinfer-python
+# sglang (from source, version-pinned)
+# flashinfer-python
+
+# === Optional: Telemetry export ===
+# Required for: Prometheus metrics endpoint
+# If not installed, telemetry still works — just no HTTP export
+# prometheus-client>=0.20
+
+# === Optional: Faster checksums ===
+# Required for: ~3x faster checksum computation
+# If not installed, falls back to stdlib hashlib
+# xxhash>=3.0
+
+# === Python version ===
+# Requires Python 3.11+ for:
+#   - typing.Protocol with runtime_checkable
+#   - dataclass slots=True
+#   - PEP 604 union syntax (X | Y)
+# Tested on Python 3.12.
