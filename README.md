@@ -153,4 +153,4 @@ ASH-KV is built to be lightweight.
 
 ## License
 
-MIT
+[MIT](LICENSE)
