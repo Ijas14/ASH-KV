@@ -6,3 +6,5 @@ tmp/
 .pytest_cache/
 .coverage
 *.ipynb
+BLUEPRINT.md
+INTERFACE.md
