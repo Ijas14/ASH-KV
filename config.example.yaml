@@ -1,0 +1,19 @@
+# ASH-KV Default Policy Configuration
+#
+# Impact: These 8 parameters govern the cold/hot memory boundary.
+# Tweak these to balance VRAM usage against generation quality.
+
+policy:
+  # Score Weights (Must sum to 1.0)
+  w_T: 0.7        # Recency: Higher = favors keeping new tokens in BF16
+  w_S: 0.1        # Saliency: Higher = favors keeping high-attention tokens
+  w_N: 0.1        # Novelty: Higher = favors keeping unusual/surprising tokens
+  w_P: 0.1        # Prefix: Higher = favors keeping shared system prompts
+
+  # Thresholds & Hysteresis
+  theta_high: 0.72  # Minimum score to promote INT8 -> BF16
+  theta_low: 0.33   # Maximum score before demoting BF16 -> INT8
+  delta: 0.04       # Gap required to trigger a state change (prevents flapping)
+
+  # Emergency Guardrail
+  p_emergency: 0.95 # If VRAM usage > 95%, forcefully demote regardless of score
