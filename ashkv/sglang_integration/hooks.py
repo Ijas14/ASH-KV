@@ -1,6 +1,6 @@
 """SGLang Integration Hooks (Node-Level).
 
-Unlike vLLM which manages blocks independently, SGLang manages KV cache
+Unlike earlier serving engines which manage blocks independently, SGLang manages KV cache
 via a Radix Tree. These hooks operate directly on `RadixNode` instances.
 When a node is evicted by SGLang, it is demoted to INT8 instead of being deleted.
 When a node is hit by a prefix match, it is promoted back to BF16.

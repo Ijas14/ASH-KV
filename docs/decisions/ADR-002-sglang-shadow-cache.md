@@ -7,7 +7,7 @@ Accepted (Supersedes ADR-001)
 2026-07-07
 
 ## Context
-ASH-KV is pivoting from vLLM to SGLang to provide GPU-resident INT8 compression for KV cache blocks. SGLang uses a sophisticated `RadixCache` to manage prefix trees and token allocation, leading to a fundamentally different block eviction lifecycle compared to vLLM's `BlockSpaceManager`.
+ASH-KV is integrating with SGLang to provide GPU-resident INT8 compression for KV cache blocks. SGLang uses a sophisticated `RadixCache` to manage prefix trees and token allocation, leading to a unique block eviction lifecycle compared to other standard `BlockSpaceManager` implementations.
 
 Key requirements:
 - We must integrate directly with SGLang (pinned to `>=0.3.0`) without requiring an AST/dynamic module traversal which is brittle and insecure.
