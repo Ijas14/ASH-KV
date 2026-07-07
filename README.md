@@ -107,18 +107,7 @@ policy:
   p_emergency: 0.95
 ```
 
----
 
-## Performance: The Cliff Finder
-
-We benchmarked ASH-KV using [`inferbench`](https://github.com/Ijas14/inferbench) (a benchmark that finds where LLM serving systems break under concurrent load).
-
-**Baseline (vLLM default):** Cliffs at concurrency 8 (Latency Spike >10x baseline).
-**With ASH-KV (INT8 Shadow Cache):** The cliff is pushed higher, preventing OOM and keeping preempted sequences on the GPU instead of swapping to CPU.
-
-*(Full baseline report available in the `results/` directory).*
-
----
 
 ## Repository Structure
 
