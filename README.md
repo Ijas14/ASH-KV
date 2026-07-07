@@ -8,7 +8,7 @@ Built on a strict cold/hot boundary: configuration is interpreted at startup, in
 
 ## The Problem
 
-When an LLM serves concurrent requests, the KV cache grows until it hits the GPU memory limit. When it hits the limit, serving engines like vLLM crash (OOM) or forcefully preempt sequences (recompute/swap), causing massive latency spikes.
+When an LLM serves concurrent requests, the KV cache grows until it hits the GPU memory limit. When it hits the limit, serving engines like SGLang crash (OOM) or forcefully preempt sequences (recompute/swap), causing massive latency spikes.
 
 Current solutions are either brute-force (eviction) or static (uniform FP8 quantization). 
 
@@ -47,21 +47,20 @@ The entire tunable surface of ASH-KV is just eight numbers. No heuristic soup, n
 
 ASH-KV never crashes the inference server.
 - **Never throw on the hot path.** Every function returns a typed `MigrationResult`.
-- **Shadow Cache.** Compressed INT8 pages live in a separate memory pool (`VLLMShadowAllocator`). vLLM's `kv_cache` tensor is *always* valid `bfloat16`. 
+- **Shadow Cache.** Compressed INT8 pages live in a separate memory pool (`SGLangShadowAllocator`). SGLang's `kv_cache` tensor is *always* valid `bfloat16`. 
 - **Circuit Breakers.** If a Triton codec fails 5 times in 60 seconds, it is disabled. Pages stay on their current tier.
 - **BF16 Fallback.** If a page becomes corrupt, it is reconstructed in BF16 from its source checksum. The decode continues.
 
-For full architectural context on the vLLM shadow cache integration, see [ADR-001: vLLM Shadow Cache Architecture](docs/decisions/ADR-001-vllm-shadow-cache.md).
+For full architectural context on the SGLang shadow cache integration, see [ADR-002: SGLang Shadow Cache Architecture](docs/decisions/ADR-002-sglang-shadow-cache.md).
 
 ---
 
 ## Current Status
 
-ASH-KV is currently integrated with **vLLM** and validated on NVIDIA T4.
+ASH-KV is currently integrated with **SGLang** and validated on NVIDIA T4.
 
 - **Codecs:** BF16 (identity), INT8 (Triton, per-token scaling, autotuned).
-- **Integration:** vLLM `BlockSpaceManager` monkey-patch. Atomic `promote_hook` and `demote_hook` intercept preemptions to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
-- **SGLang:** Architecture supports it, integration is on the roadmap.
+- **Integration:** SGLang `RadixCache` proxy patch. Atomic `promote_hook` and `demote_hook` intercept preemptions at the node level to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
 
 ### Validated on
 - **NVIDIA A100** (Target deployment)
@@ -80,14 +79,18 @@ cd ASH-KV
 pip install -e .
 ```
 
-### Run vLLM with ASH-KV
+### Test SGLang with ASH-KV
 
 ```bash
-# Start vLLM with ASH-KV enabled
-ASHKV_ENABLED=1 python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen3.6-27B \
-    --max-model-len 262144 \
-    --gpu-memory-utilization 0.95
+# 1. Start SGLang server with restricted memory to force early evictions
+ASHKV_ENABLED=1 python -m sglang.launch_server \
+    --model-path Qwen/Qwen3.6-27B \
+    --mem-fraction-static 0.4 \
+    --port 30000
+
+# 2. In another terminal, send 32 concurrent requests
+# Verify demote/promote hooks fire, verify no NaNs, and verify no crash.
+python3 -m sglang.bench_serving --backend sglang --num-prompts 32
 ```
 
 ### Configuration
@@ -118,7 +121,7 @@ ashkv/
 ├── compiler/           # Cold path: config -> closures, hardware probe
 ├── codecs/             # Triton kernels (INT8, FP8, INT4) + checksums
 ├── safety/             # Circuit breakers, pressure guard, BF16 fallback
-├── vllm_integration/   # Shadow allocator, hooks, block manager patch
+├── sglang_integration/   # Shadow allocator, hooks, block manager patch
 ├── docs/decisions/     # Architectural Decision Records (ADRs)
 └── tests/              # 144 tests (contracts, fault injection, dependency direction)
 ```
