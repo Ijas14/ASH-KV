@@ -60,7 +60,9 @@ def _get_kernels():
         tl.store(scale_ptr + token_id, abs_max)
 
         # Quantize
-        int8_vals = tl.cast(tl.round(vals * 127.0 / abs_max), tl.int8)
+        scaled = vals * 127.0 / abs_max
+        rounded = scaled + tl.where(scaled > 0.0, 0.5, -0.5)
+        int8_vals = tl.cast(rounded, tl.int8)
         tl.store(int8_ptr + token_id * hidden_dim + offsets, int8_vals, mask=mask)
 
     @triton.jit
