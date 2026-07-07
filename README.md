@@ -91,7 +91,7 @@ python3 -m sglang.bench_serving --backend sglang --num-prompts 32
 
 ### Configuration
 
-Tune the 8 numbers via a simple YAML file:
+Tune the 8 numbers via a simple YAML file. See [`config.example.yaml`](config.example.yaml) for a fully documented sample configuration explaining the impact of each parameter.
 
 ```yaml
 # config.yaml
