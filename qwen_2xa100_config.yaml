@@ -1,0 +1,19 @@
+# ASH-KV Configuration for Qwen 3.6 27B on 2xA100 (INT8 Shadow Cache)
+# 
+# This config defines the 8-number policy surface that governs when
+# a page is migrated between the hot BF16 cache and the shadow INT8 pool.
+
+policy:
+  # Base weights (must sum to 1.0)
+  w_T: 0.7  # Temporal locality weight (recency)
+  w_S: 0.1  # Saliency weight (attention scores)
+  w_N: 0.1  # Novelty weight (surprise)
+  w_P: 0.1  # Prefix affinity weight (shared prompt prefix)
+
+  # Hysteresis thresholds for migration
+  theta_high: 0.72  # Minimum score to promote a page to BF16
+  theta_low:  0.33  # Maximum score before a page is demoted to INT8
+  delta:      0.04  # Minimum threshold gap to prevent flapping
+
+  # Emergency circuit breakers
+  p_emergency: 0.95 # Drop pages directly to disk/evict if memory pressure exceeds 95%
