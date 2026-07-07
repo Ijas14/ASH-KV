@@ -57,14 +57,13 @@ For full architectural context on the vLLM shadow cache integration, see [ADR-00
 
 ## Current Status
 
-ASH-KV is currently integrated with **vLLM** and validated on AMD MI300X and NVIDIA T4.
+ASH-KV is currently integrated with **vLLM** and validated on NVIDIA T4.
 
 - **Codecs:** BF16 (identity), INT8 (Triton, per-token scaling, autotuned).
 - **Integration:** vLLM `BlockSpaceManager` monkey-patch. Atomic `promote_hook` and `demote_hook` intercept preemptions to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
 - **SGLang:** Architecture supports it, integration is on the roadmap.
 
 ### Validated on
-- **AMD Instinct MI300X** (192GB HBM3)
 - **NVIDIA A100** (Target deployment)
 - **NVIDIA T4** (Colab/Kaggle testing)
 
@@ -72,9 +71,12 @@ ASH-KV is currently integrated with **vLLM** and validated on AMD MI300X and NVI
 
 ## Quick Start
 
-1. Clone the repository
-2. Install the package and its dependencies (requires PyTorch and Triton):
 ```bash
+# 1. Clone the repository
+git clone https://github.com/Ijas14/ASH-KV.git
+cd ASH-KV
+
+# 2. Install the package and its dependencies (requires PyTorch and Triton)
 pip install -e .
 ```
 
@@ -114,7 +116,7 @@ We benchmarked ASH-KV using [`inferbench`](https://github.com/Ijas14/inferbench)
 **Baseline (vLLM default):** Cliffs at concurrency 8 (Latency Spike >10x baseline).
 **With ASH-KV (INT8 Shadow Cache):** The cliff is pushed higher, preventing OOM and keeping preempted sequences on the GPU instead of swapping to CPU.
 
-*(Full MI300X baseline report available in the `results/` directory).*
+*(Full baseline report available in the `results/` directory).*
 
 ---
 
