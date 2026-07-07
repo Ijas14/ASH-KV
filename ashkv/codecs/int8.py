@@ -32,6 +32,20 @@ def _get_kernels():
     import triton
     import triton.language as tl
 
+    @triton.autotune(
+        configs=[
+            triton.Config({'BLOCK_SIZE': 64}, num_warps=2),
+            triton.Config({'BLOCK_SIZE': 64}, num_warps=4),
+            triton.Config({'BLOCK_SIZE': 64}, num_warps=8),
+            triton.Config({'BLOCK_SIZE': 128}, num_warps=2),
+            triton.Config({'BLOCK_SIZE': 128}, num_warps=4),
+            triton.Config({'BLOCK_SIZE': 128}, num_warps=8),
+            triton.Config({'BLOCK_SIZE': 256}, num_warps=2),
+            triton.Config({'BLOCK_SIZE': 256}, num_warps=4),
+            triton.Config({'BLOCK_SIZE': 256}, num_warps=8),
+        ],
+        key=['hidden_dim']
+    )
     @triton.jit
     def _int8_encode_kernel(
         bf16_ptr,        # *float16, shape (num_tokens, hidden_dim)
@@ -65,6 +79,20 @@ def _get_kernels():
         int8_vals = tl.cast(rounded, tl.int8)
         tl.store(int8_ptr + token_id * hidden_dim + offsets, int8_vals, mask=mask)
 
+    @triton.autotune(
+        configs=[
+            triton.Config({'BLOCK_SIZE': 64}, num_warps=2),
+            triton.Config({'BLOCK_SIZE': 64}, num_warps=4),
+            triton.Config({'BLOCK_SIZE': 64}, num_warps=8),
+            triton.Config({'BLOCK_SIZE': 128}, num_warps=2),
+            triton.Config({'BLOCK_SIZE': 128}, num_warps=4),
+            triton.Config({'BLOCK_SIZE': 128}, num_warps=8),
+            triton.Config({'BLOCK_SIZE': 256}, num_warps=2),
+            triton.Config({'BLOCK_SIZE': 256}, num_warps=4),
+            triton.Config({'BLOCK_SIZE': 256}, num_warps=8),
+        ],
+        key=['hidden_dim']
+    )
     @triton.jit
     def _int8_decode_kernel(
         int8_ptr,        # *int8, shape (num_tokens, hidden_dim)
@@ -140,16 +168,13 @@ class INT8Codec:
         scale_factors = torch.empty((num_tokens,), dtype=torch.float16, device="cuda")
         int8_vals = torch.empty((num_tokens, self._hidden_dim), dtype=torch.int8, device="cuda")
 
-        block_size = _next_power_of_2(self._hidden_dim)
-        grid = (num_tokens,)
-        
+        # The autotuner handles BLOCK_SIZE now.
         encode_kernel[grid](
             arr_gpu,
             int8_vals,
             scale_factors,
             num_tokens,
             self._hidden_dim,
-            BLOCK_SIZE=block_size,
         )
 
         header = struct.pack("<I", num_tokens)
@@ -184,16 +209,13 @@ class INT8Codec:
 
         bf16_vals = torch.empty((num_tokens, self._hidden_dim), dtype=torch.float16, device="cuda")
 
-        block_size = _next_power_of_2(self._hidden_dim)
-        grid = (num_tokens,)
-        
+        # The autotuner handles BLOCK_SIZE now.
         decode_kernel[grid](
             int8_vals,
             scale_factors,
             bf16_vals,
             num_tokens,
             self._hidden_dim,
-            BLOCK_SIZE=block_size,
         )
 
         return bf16_vals.cpu().numpy().tobytes()
