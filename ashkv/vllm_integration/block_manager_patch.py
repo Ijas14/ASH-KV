@@ -57,7 +57,8 @@ def apply_block_manager_patches(
                 # BUT if ASH-KV tracks logical -> physical mapping, it would. 
                 # For this patch, we assume the hook handles the logic.
                 if _HOOKS and _VLLM_KV_CACHE is not None:
-                    _HOOKS.promote_hook([block_num], _VLLM_KV_CACHE)
+                    if block_num in _HOOKS.shadow_handles:
+                        _HOOKS.promote_hook([block_num], _VLLM_KV_CACHE)
                     
             return block
 

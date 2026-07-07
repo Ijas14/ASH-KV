@@ -59,17 +59,17 @@ class VLLMHooks:
 
                 block_tensor = vllm_kv_cache[block_num]
                 
-                # We know the INT8 codec packed shape: [scale_factors (float16)] + [int8_vals (int8)]
+                # We know the INT8 codec packed shape: [scale_factors (bfloat16)] + [int8_vals (int8)]
                 # Determine sizes from block_tensor shape (assumed: num_tokens * hidden_dim)
                 # vLLM's shape is complex, but we flatten it for the codec.
                 hidden_dim = block_tensor.shape[-1]
                 num_tokens = block_tensor.numel() // hidden_dim
                 
                 scale_bytes = num_tokens * 2
-                scale_factors = shadow_tensor[:scale_bytes].view(torch.float16)
+                scale_factors = shadow_tensor[:scale_bytes].view(torch.bfloat16)
                 int8_vals = shadow_tensor[scale_bytes:].view(torch.int8).view(num_tokens, hidden_dim)
                 
-                bf16_vals = torch.empty((num_tokens, hidden_dim), dtype=torch.float16, device="cuda")
+                bf16_vals = torch.empty((num_tokens, hidden_dim), dtype=torch.bfloat16, device="cuda")
                 
                 # Direct Triton call (no CPU byte conversion)
                 grid = (num_tokens,)
@@ -112,9 +112,9 @@ class VLLMHooks:
                 hidden_dim = block_tensor.shape[-1]
                 num_tokens = block_tensor.numel() // hidden_dim
                 
-                arr_gpu = block_tensor.to(dtype=torch.float16).view(num_tokens, hidden_dim)
+                arr_gpu = block_tensor.to(dtype=torch.bfloat16).view(num_tokens, hidden_dim)
                 
-                scale_factors = torch.empty((num_tokens,), dtype=torch.float16, device="cuda")
+                scale_factors = torch.empty((num_tokens,), dtype=torch.bfloat16, device="cuda")
                 int8_vals = torch.empty((num_tokens, hidden_dim), dtype=torch.int8, device="cuda")
                 
                 # Direct Triton call
@@ -146,5 +146,5 @@ class VLLMHooks:
                 # Checksum validation skipped on hot path for performance
                 # We assume the Triton kernel didn't silently corrupt data
                 # Commit transition to INT8
-                new_checksum = 0 # Using 0 to skip validation overhead during fast-path
-                self.page_table.apply_tier_transition(block_num, Tier.INT8, new_checksum)
+                original_checksum = self.page_table.get_bf16_checksum(block_num)
+                self.page_table.apply_tier_transition(block_num, Tier.INT8, original_checksum)

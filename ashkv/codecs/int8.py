@@ -2,7 +2,7 @@
 
 INT8 on A100 requires per-token scaling factors to avoid quality
 collapse. The format is:
-    [num_tokens (uint32)] [scale_factors (float16 * num_tokens)] [int8_values]
+    [num_tokens (uint32)] [scale_factors (bfloat16 * num_tokens)] [int8_values]
 
 The Triton kernel does:
 1. Compute per-token abs_max from the BF16 source
@@ -48,9 +48,9 @@ def _get_kernels():
     )
     @triton.jit
     def _int8_encode_kernel(
-        bf16_ptr,        # *float16, shape (num_tokens, hidden_dim)
+        bf16_ptr,        # *bfloat16, shape (num_tokens, hidden_dim)
         int8_ptr,        # *int8, shape (num_tokens, hidden_dim)
-        scale_ptr,       # *float16, shape (num_tokens,)
+        scale_ptr,       # *bfloat16, shape (num_tokens,)
         num_tokens,
         hidden_dim,
         BLOCK_SIZE: tl.constexpr,
@@ -96,8 +96,8 @@ def _get_kernels():
     @triton.jit
     def _int8_decode_kernel(
         int8_ptr,        # *int8, shape (num_tokens, hidden_dim)
-        scale_ptr,       # *float16, shape (num_tokens,)
-        bf16_ptr,        # *float16, shape (num_tokens, hidden_dim)
+        scale_ptr,       # *bfloat16, shape (num_tokens,)
+        bf16_ptr,        # *bfloat16, shape (num_tokens, hidden_dim)
         num_tokens,
         hidden_dim,
         BLOCK_SIZE: tl.constexpr,
@@ -115,7 +115,7 @@ def _get_kernels():
 
         # Dequantize
         bf16_vals = tl.cast(int8_vals, tl.float32) * tl.cast(scale, tl.float32) / 127.0
-        tl.store(bf16_ptr + token_id * hidden_dim + offsets, tl.cast(bf16_vals, tl.float16), mask=mask)
+        tl.store(bf16_ptr + token_id * hidden_dim + offsets, tl.cast(bf16_vals, tl.bfloat16), mask=mask)
 
     _encode_kernel = _int8_encode_kernel
     _decode_kernel = _int8_decode_kernel
@@ -157,7 +157,7 @@ class INT8Codec:
         import torch
         encode_kernel, _ = _get_kernels()
 
-        arr = torch.frombuffer(bytearray(source_bytes), dtype=torch.float16)
+        arr = torch.frombuffer(bytearray(source_bytes), dtype=torch.bfloat16)
         num_tokens = len(arr) // self._hidden_dim
         if num_tokens == 0:
             return struct.pack("<I", 0)
@@ -165,7 +165,7 @@ class INT8Codec:
         arr = arr[:num_tokens * self._hidden_dim].view(num_tokens, self._hidden_dim)
         arr_gpu = arr.cuda()
 
-        scale_factors = torch.empty((num_tokens,), dtype=torch.float16, device="cuda")
+        scale_factors = torch.empty((num_tokens,), dtype=torch.bfloat16, device="cuda")
         int8_vals = torch.empty((num_tokens, self._hidden_dim), dtype=torch.int8, device="cuda")
 
         # The autotuner handles BLOCK_SIZE now.
@@ -200,7 +200,7 @@ class INT8Codec:
         int8_size = num_tokens * self._hidden_dim
 
         scale_factors = torch.frombuffer(
-            bytearray(target_bytes[4:4 + scale_size]), dtype=torch.float16
+            bytearray(target_bytes[4:4 + scale_size]), dtype=torch.bfloat16
         ).cuda()
         
         int8_vals = torch.frombuffer(
@@ -208,7 +208,7 @@ class INT8Codec:
             dtype=torch.int8,
         ).view(num_tokens, self._hidden_dim).cuda()
 
-        bf16_vals = torch.empty((num_tokens, self._hidden_dim), dtype=torch.float16, device="cuda")
+        bf16_vals = torch.empty((num_tokens, self._hidden_dim), dtype=torch.bfloat16, device="cuda")
 
         # The autotuner handles BLOCK_SIZE now.
         grid = (num_tokens,)
