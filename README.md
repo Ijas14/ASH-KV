@@ -91,10 +91,6 @@ ASHKV_ENABLED=1 python -m sglang.launch_server \
 python3 -m sglang.bench_serving --backend sglang --num-prompts 32
 ```
 
-**2. End-to-End Hardware Validation**
-Check out the `notebooks/` directory for interactive validation environments:
-- `mi300x_sglang_e2e.ipynb`: E2E hardware simulation using real Triton kernels on AMD MI300X.
-- `sglang_e2e_colab.ipynb`: E2E hardware simulation for Colab T4.
 
 ### Configuration
 
