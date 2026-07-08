@@ -29,10 +29,15 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
     _MEMORY_POOL = memory_pool
 
     try:
-        from sglang.srt.managers.radix_cache import RadixCache, TreeNode
-    except ImportError as e:
-        logger.error("Failed to import SGLang RadixCache. ASH-KV requires SGLang >= 0.3.0.")
-        raise RuntimeError(f"Incompatible SGLang version or missing dependency: {e}")
+        # SGLang >= 0.5.x moved RadixCache to mem_cache
+        from sglang.srt.mem_cache.radix_cache import RadixCache, TreeNode
+    except ImportError:
+        try:
+            # SGLang < 0.5.x used managers
+            from sglang.srt.managers.radix_cache import RadixCache, TreeNode
+        except ImportError as e:
+            logger.error("Failed to import SGLang RadixCache. ASH-KV requires SGLang >= 0.3.0.")
+            raise RuntimeError(f"Incompatible SGLang version or missing dependency: {e}")
 
     original_match_prefix = RadixCache.match_prefix
     original_evict = RadixCache.evict
