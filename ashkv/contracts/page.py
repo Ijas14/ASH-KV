@@ -71,7 +71,7 @@ class PageTable:
     controller runs single-threaded per decode step).
     """
 
-    __slots__ = ("_arr", "_next_id", "_index", "_capacity", "_size")
+    __slots__ = ("_arr", "_next_id", "_page_to_row", "_capacity", "_size")
 
     def __init__(self, capacity: int = 1 << 20) -> None:
         self._capacity = int(capacity)
@@ -79,7 +79,21 @@ class PageTable:
         self._arr["page_id"] = -1  # mark all rows as empty
         self._next_id = 0
         self._size = 0
-        self._index: dict[int, int] = {}  # page_id -> row index
+        # Dynamically resizing array for page_id -> row lookup
+        self._page_to_row = np.full(max(self._capacity * 2, 1024), -1, dtype=np.int64)
+
+    def _ensure_page_to_row_capacity(self, max_page_id: int) -> None:
+        if max_page_id >= len(self._page_to_row):
+            new_size = max(len(self._page_to_row) * 2, max_page_id + 1024)
+            new_arr = np.full(new_size, -1, dtype=np.int64)
+            new_arr[:len(self._page_to_row)] = self._page_to_row
+            self._page_to_row = new_arr
+
+    def _get_row(self, page_id: int) -> int:
+        """Helper to get row index safely."""
+        if 0 <= page_id < len(self._page_to_row):
+            return int(self._page_to_row[page_id])
+        return -1
 
     # --- Cold path: lifecycle ---
 
@@ -122,7 +136,8 @@ class PageTable:
         row["N"] = 0.0
         row["P"] = 0.0
 
-        self._index[page_id] = idx
+        self._ensure_page_to_row_capacity(page_id)
+        self._page_to_row[page_id] = idx
         return page_id
 
     def remove(self, page_id: int) -> None:
@@ -130,14 +145,16 @@ class PageTable:
 
         Never raises. Missing page_id is a no-op.
         """
-        idx = self._index.pop(page_id, None)
-        if idx is None:
+        idx = self._get_row(page_id)
+        if idx < 0:
             return
+        
+        self._page_to_row[page_id] = -1
         last = self._size - 1
         if idx != last:
             self._arr[idx] = self._arr[last]
             moved_id = int(self._arr[idx]["page_id"])
-            self._index[moved_id] = idx
+            self._page_to_row[moved_id] = idx
         self._size -= 1
 
     # --- Hot path: read ---
@@ -154,30 +171,30 @@ class PageTable:
     def find(self, page_id: int) -> int:
         """Return the row index for page_id, or -1 if not found.
 
-        Hot-path-safe: O(1) dict lookup, never raises.
+        Hot-path-safe: O(1) array lookup, never raises.
         """
-        return self._index.get(int(page_id), -1)
+        return self._get_row(page_id)
 
     def get_tier(self, page_id: int) -> int:
         """Return the current tier of a page, or -1 if not found.
 
         Returns the raw int8 tier value (cast to int). Never raises.
         """
-        idx = self._index.get(int(page_id), -1)
+        idx = self._get_row(page_id)
         if idx < 0:
             return -1
         return int(self._arr[idx]["tier"])
 
     def get_pin_count(self, page_id: int) -> int:
         """Return the pin count of a page, or -1 if not found."""
-        idx = self._index.get(int(page_id), -1)
+        idx = self._get_row(page_id)
         if idx < 0:
             return -1
         return int(self._arr[idx]["pin_count"])
 
     def get_bf16_checksum(self, page_id: int) -> int:
         """Return the immutable BF16 checksum of a page, or 0 if not found."""
-        idx = self._index.get(int(page_id), -1)
+        idx = self._get_row(page_id)
         if idx < 0:
             return 0
         return int(self._arr[idx]["bf16_checksum"])
@@ -203,8 +220,8 @@ class PageTable:
         NEVER raises. This is the only method that mutates the tier
         field on the hot path.
         """
-        idx = self._index.get(page_id)
-        if idx is None:
+        idx = self._get_row(page_id)
+        if idx < 0:
             return False
         if self._arr[idx]["pin_count"] > 0:
             return False
@@ -216,23 +233,23 @@ class PageTable:
 
     def touch(self, page_id: int, time: int) -> None:
         """Mark a page as accessed. No-op if missing."""
-        idx = self._index.get(page_id)
-        if idx is None:
+        idx = self._get_row(page_id)
+        if idx < 0:
             return
         self._arr[idx]["last_access"] = time
         self._arr[idx]["access_count"] += 1
 
     def pin(self, page_id: int) -> None:
         """Increment pin count. No-op if missing."""
-        idx = self._index.get(page_id)
-        if idx is None:
+        idx = self._get_row(page_id)
+        if idx < 0:
             return
         self._arr[idx]["pin_count"] += 1
 
     def unpin(self, page_id: int) -> None:
         """Decrement pin count. No-op if missing or already 0."""
-        idx = self._index.get(page_id)
-        if idx is None:
+        idx = self._get_row(page_id)
+        if idx < 0:
             return
         cnt = int(self._arr[idx]["pin_count"])
         if cnt > 0:
@@ -256,11 +273,13 @@ class PageTable:
         if not (len(T) == len(S) == len(N) == len(P) == n):
             raise ValueError(f"Mismatched score array lengths: page_ids={n}, T={len(T)}, S={len(S)}, N={len(N)}, P={len(P)}")
 
-        # Resolve page_ids to row indices. Missing -> -1.
-        idx = np.empty(n, dtype=np.int64)
-        index_get = self._index.get
-        for i in range(n):
-            idx[i] = index_get(int(page_ids[i]), -1)
+        # Vectorized page_ids to row indices mapping. Missing -> -1.
+        valid_pids = (page_ids >= 0) & (page_ids < len(self._page_to_row))
+        if not valid_pids.all():
+            idx = np.full(n, -1, dtype=np.int64)
+            idx[valid_pids] = self._page_to_row[page_ids[valid_pids]]
+        else:
+            idx = self._page_to_row[page_ids]
 
         valid = idx >= 0
         if not valid.any():
