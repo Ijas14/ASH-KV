@@ -142,7 +142,9 @@ class SGLangHooks:
         if physical_indices is None:
             return False
             
-        num_tokens = getattr(node, "length", 0)           
+        num_tokens = getattr(node, "length", 0)
+        if num_tokens == 0 and physical_indices is not None:
+            num_tokens = len(physical_indices)           
         if not self.circuit_breaker.is_codec_available(self.codec_name):
             print(f"[HOOKS] Circuit breaker unavailable for {self.codec_name}")
             return False # Circuit breaker tripped, fall back to native eviction
