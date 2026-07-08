@@ -57,9 +57,10 @@ For full architectural context on the SGLang shadow cache integration, see [ADR-
 
 ## Current Status
 
-ASH-KV is currently integrated with **SGLang** - Validating in colab/kaggle ( T4 ).
+ASH-KV is currently integrated with **SGLang** - Validated natively on **AMD MI300X** instances (ROCm 7.0+) and Google Colab (T4).
 
-- **Codecs:** BF16 (identity), INT8 (Triton, per-token scaling, autotuned).
+- **Codecs:** BF16 (identity), INT8 and INT4 (highly optimized, model-agnostic Triton kernels with per-token scaling).
+- **Telemetry:** Vectorized `PageTable` indexing utilizing O(1) NumPy array lookups (no Python loops in the hot path).
 - **Integration:** SGLang `RadixCache` proxy patch. Atomic `promote_hook` and `demote_hook` intercept preemptions at the node level to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
 
 ---
@@ -77,17 +78,23 @@ pip install -e .
 
 ### Test SGLang with ASH-KV
 
+**1. Live Inference Server**
 ```bash
-# 1. Start SGLang server with restricted memory to force early evictions
+# Start SGLang server with restricted memory to force early evictions
 ASHKV_ENABLED=1 python -m sglang.launch_server \
     --model-path Qwen/Qwen3.6-27B \
     --mem-fraction-static 0.4 \
     --port 30000
 
-# 2. In another terminal, send 32 concurrent requests
+# In another terminal, send 32 concurrent requests
 # Verify demote/promote hooks fire, verify no NaNs, and verify no crash.
 python3 -m sglang.bench_serving --backend sglang --num-prompts 32
 ```
+
+**2. End-to-End Hardware Validation**
+Check out the `notebooks/` directory for interactive validation environments:
+- `mi300x_sglang_e2e.ipynb`: E2E hardware simulation using real Triton kernels on AMD MI300X.
+- `sglang_e2e_colab.ipynb`: E2E hardware simulation for Colab T4.
 
 ### Configuration
 
