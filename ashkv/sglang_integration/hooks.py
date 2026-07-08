@@ -135,19 +135,19 @@ class SGLangHooks:
         Returns:
             bool: True if successfully compressed and intercepted eviction, False otherwise.
         """
-        if getattr(node, "is_compressed", False):
-            return True # Already compressed
-
-        if not hasattr(node, "kv_indices") or node.kv_indices is None:
-            print("[HOOKS] No kv_indices")
+        if hasattr(node, "is_compressed") and node.is_compressed:
+            return True
+            
+        physical_indices = getattr(node, "kv_indices", getattr(node, "value", None))
+        if physical_indices is None:
             return False
             
+        num_tokens = getattr(node, "length", 0)           
         if not self.circuit_breaker.is_codec_available(self.codec_name):
             print(f"[HOOKS] Circuit breaker unavailable for {self.codec_name}")
             return False # Circuit breaker tripped, fall back to native eviction
             
-        kv_indices = node.kv_indices
-        num_tokens = len(kv_indices)
+        kv_indices = physical_indices
         
         if isinstance(sglang_kv_cache, (list, tuple)):
             hidden_dim = sglang_kv_cache[0].shape[-1]

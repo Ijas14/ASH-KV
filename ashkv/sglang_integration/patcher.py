@@ -42,7 +42,7 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
     original_match_prefix = RadixCache.match_prefix
     original_evict = RadixCache.evict
 
-    def ashkv_match_prefix(self, key, **kwargs):
+    def ashkv_match_prefix(self, *args, **kwargs):
         """Intercept prefix matching to trigger promote_hook.
         
         When a request matches a prefix, if that prefix node is compressed
@@ -57,11 +57,16 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
             # to find the matching node path. SGLang returns the matching nodes 
             # or the matched length. This is highly dependent on SGLang internals.
             # In SGLang >= 0.3.0, it returns (matched_node, matched_length, ...).
-            result = original_match_prefix(self, key, **kwargs)
+            # In SGLang v0.5.x, it returns a MatchResult object.
+            result = original_match_prefix(self, *args, **kwargs)
             
-            if isinstance(result, tuple) and len(result) > 0:
+            matched_node = None
+            if hasattr(result, "last_device_node"):
+                matched_node = result.last_device_node
+            elif isinstance(result, tuple) and len(result) > 0:
                 matched_node = result[0]
                 
+            if matched_node is not None:
                 # Traverse up the tree to ensure all parent nodes are promoted
                 curr = matched_node
                 while curr is not None:
@@ -75,7 +80,7 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
 
             return result
 
-    def ashkv_evict(self, num_tokens: int, evict_callback):
+    def ashkv_evict(self, *args, **kwargs):
         """Intercept eviction to trigger demote_hook.
         
         Instead of freeing physical slots to the void, we compress the node
@@ -85,20 +90,40 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
         with _PATCH_LOCK:
             freed_tokens = 0
             
+            num_tokens = kwargs.get("num_tokens", 0)
+            is_v05x = False
+            if len(args) > 0:
+                if hasattr(args[0], "num_tokens"):
+                    num_tokens = args[0].num_tokens
+                    is_v05x = True
+                elif isinstance(args[0], int):
+                    num_tokens = args[0]
+                    
+            evict_callback = kwargs.get("evict_callback", None)
+            if len(args) > 1 and callable(args[1]):
+                evict_callback = args[1]
+            
             # Replicate SGLang's LRU eviction loop but inject compression
             while freed_tokens < num_tokens and self.evictable_size_ > 0:
-                # SGLang maintains an lru_queue (or similar structure)
-                if not hasattr(self, "evictable_queue") and not hasattr(self, "lru_queue"):
-                    # Fallback if internal names changed
-                    break
-                    
-                queue = getattr(self, "lru_queue", getattr(self, "evictable_queue", None))
+                # SGLang maintains an lru_queue, evictable_queue, or evictable_leaves
+                queue = getattr(self, "lru_queue", getattr(self, "evictable_queue", getattr(self, "evictable_leaves", None)))
                 if queue is None or len(queue) == 0:
                     break
                     
                 # Get the least recently used node
-                # We assume queue is a dict-like or list-like OrderedDict
-                node = next(iter(queue.values())) if isinstance(queue, dict) else queue[0]
+                if isinstance(queue, set):
+                    if hasattr(self, "eviction_strategy"):
+                        import heapq
+                        leaves = list(queue)
+                        eviction_heap = [(self.eviction_strategy.get_priority(n), n) for n in leaves]
+                        heapq.heapify(eviction_heap)
+                        _, node = heapq.heappop(eviction_heap)
+                    else:
+                        node = next(iter(queue))
+                elif isinstance(queue, dict):
+                    node = next(iter(queue.values()))
+                else:
+                    node = queue[0]
                 
                 # Attempt to compress it
                 success = _HOOKS.demote_hook(node, _SGLANG_KV_CACHE, _MEMORY_POOL)
@@ -111,7 +136,11 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
                     # Node is compressed and physical slots freed internally by demote_hook.
                     # We remove it from the evictable queue since it's no longer occupying BF16.
                     freed_tokens += node_tokens
-                    if isinstance(queue, dict):
+                    if isinstance(queue, set):
+                        queue.remove(node)
+                        if hasattr(self, "_update_leaf_status"):
+                            self._update_leaf_status(node.parent)
+                    elif isinstance(queue, dict):
                         del queue[id(node)]
                     else:
                         queue.pop(0)
@@ -119,13 +148,25 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
                     self.evictable_size_ -= node_tokens
                 else:
                     # Shadow cache is full (or failed), fallback to actual native eviction
-                    # SGLang usually calls evict_callback(node.kv_indices) and removes node from tree.
-                    if hasattr(node, "kv_indices") and node.kv_indices is not None:
-                        evict_callback(node.kv_indices)
+                    kv_indices = getattr(node, "kv_indices", getattr(node, "value", None))
+                    if kv_indices is not None:
+                        if evict_callback:
+                            evict_callback(kv_indices)
+                        elif getattr(self, "token_to_kv_pool_allocator", None):
+                            self.token_to_kv_pool_allocator.free(kv_indices)
                         freed_tokens += node_tokens
                     
-                    self._remove_node(node) # Native SGLang cleanup
+                    if hasattr(self, "_delete_leaf"):
+                        self._delete_leaf(node)
+                    else:
+                        self._remove_node(node)
                     
+            if is_v05x:
+                try:
+                    from sglang.srt.mem_cache.base_prefix_cache import EvictResult
+                    return EvictResult(num_tokens_evicted=freed_tokens)
+                except ImportError:
+                    pass
             return freed_tokens
 
     # Apply the patches
