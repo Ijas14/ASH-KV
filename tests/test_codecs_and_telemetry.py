@@ -113,6 +113,7 @@ class TestMockCodecs:
         codec = MockFP8Codec()
         data = bytes(b for b in b"hello world " for _ in range(2)) * 100
         encoded = codec.encode(data)
+        assert len(encoded) == len(data) // 2
         decoded = codec.decode(encoded)
         # Mock codec round-trips exactly
         assert codec.checksum(decoded) == codec.checksum(data)
@@ -334,3 +335,12 @@ class TestMockAllocator:
         alloc.alloc(Tier.BF16, -1)  # invalid size
         alloc.alloc(Tier.BF16, 0)   # zero size
         # Should not raise
+
+    def test_free_reduces_tier_used(self) -> None:
+        from ashkv.runtime import MockAllocator
+
+        alloc = MockAllocator(budget_bytes=100)
+        h = alloc.alloc(Tier.FP8, 50)
+        assert alloc._per_tier_used[int(Tier.FP8)] == 50
+        alloc.free(h)
+        assert alloc._per_tier_used.get(int(Tier.FP8), 0) == 0

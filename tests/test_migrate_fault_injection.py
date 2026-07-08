@@ -25,6 +25,7 @@ from ashkv.contracts import (
     PageTable,
     Tier,
 )
+from ashkv.safety.circuit_breaker import CircuitBreakerRegistry
 from ashkv.runtime.migrate import migrate
 
 
@@ -245,6 +246,72 @@ class TestMigrateSafetyGuards:
         )
         assert result.status == MigrationStatus.SKIPPED
         assert "no codec" in result.error
+
+
+class TestMigrateCircuitBreaker:
+    def test_tripped_breaker_skipped(self) -> None:
+        pt, page_id, src_bytes = _make_page_table_with_page(Tier.BF16)
+        allocator = MockAllocator()
+        codec = MockCodec()
+        registry = CircuitBreakerRegistry()
+        codec_name = f"{Tier.BF16.name}_to_{Tier.FP8.name}"
+        
+        # Manually trip the breaker
+        breaker = registry.get_or_create(codec_name)
+        breaker.threshold = 1
+        breaker.record_failure()
+        assert breaker.is_tripped
+
+        result = migrate(
+            page_id=page_id,
+            target_tier=Tier.FP8,
+            page_table=pt,
+            allocator=allocator,
+            codec_table=_make_codec_table(Tier.BF16, Tier.FP8, codec),
+            page_handle_lookup=lambda pid: 1,
+            page_size_lookup=lambda pid: 100,
+            breaker_registry=registry,
+        )
+        
+        assert result.status == MigrationStatus.SKIPPED
+        assert "breaker tripped" in result.error
+
+    def test_migrate_records_failure_and_success(self) -> None:
+        pt, page_id, src_bytes = _make_page_table_with_page(Tier.BF16)
+        allocator = MockAllocator()
+        allocator._buffers[1] = src_bytes
+        registry = CircuitBreakerRegistry()
+        codec_name = f"{Tier.BF16.name}_to_{Tier.FP8.name}"
+
+        # 1. Test Failure (encode raises)
+        codec_fail = MockCodec(encode_raises=True)
+        migrate(
+            page_id=page_id,
+            target_tier=Tier.FP8,
+            page_table=pt,
+            allocator=allocator,
+            codec_table=_make_codec_table(Tier.BF16, Tier.FP8, codec_fail),
+            page_handle_lookup=lambda pid: 1,
+            page_size_lookup=lambda pid: len(src_bytes),
+            breaker_registry=registry,
+        )
+        assert registry.get_or_create(codec_name).failure_count == 1
+
+        # 2. Test Success
+        codec_success = MockCodec()
+        migrate(
+            page_id=page_id,
+            target_tier=Tier.FP8,
+            page_table=pt,
+            allocator=allocator,
+            codec_table=_make_codec_table(Tier.BF16, Tier.FP8, codec_success),
+            page_handle_lookup=lambda pid: 1,
+            page_size_lookup=lambda pid: len(src_bytes),
+            breaker_registry=registry,
+        )
+        # Success prunes failures if outside window, but in this test it just records success.
+        # Since it succeeded, the failure count remains 1 but breaker is functional.
+        assert not registry.get_or_create(codec_name).is_tripped
 
 
 # --- Codec fault injection ---
