@@ -56,4 +56,27 @@ class SGLangShadowAllocator:
         
     def get_utilization(self) -> float:
         """Return the current utilization ratio (0.0 to 1.0)."""
+        if self.max_bytes == 0:
+            return 0.0
         return self.allocated_bytes / self.max_bytes
+
+    def read(self, handle: int) -> bytes:
+        """Read bytes from the shadow buffer."""
+        tensor = self.pool.get(handle)
+        if tensor is None:
+            return b""
+        # Ensure we return cpu bytes
+        return tensor.cpu().numpy().tobytes()
+
+    def write(self, handle: int, data: bytes) -> None:
+        """Write bytes to the shadow buffer."""
+        tensor = self.pool.get(handle)
+        if tensor is not None:
+            # Create a tensor from bytes and copy it over
+            import numpy as np
+            byte_tensor = torch.from_numpy(np.frombuffer(data, dtype=np.uint8)).to("cuda")
+            tensor.copy_(byte_tensor)
+
+    def pressure(self) -> float:
+        """Return the allocator pressure."""
+        return self.get_utilization()

@@ -25,6 +25,20 @@ from .mock import (
     MockINT4Codec,
     MockINT8Codec,
 )
+from ashkv.compiler.registry import codec_registry
+
+# Register actual codecs
+codec_registry.register("bf16", BF16Codec())
+codec_registry.register("int8_default", INT8Codec())
+codec_registry.register("int4_default", INT4Codec())
+codec_registry.register("fp8_default", FP8Codec())
+
+# Register mock codecs for testing
+codec_registry.register("mock_int8", MockINT8Codec())
+codec_registry.register("mock_fp8", MockFP8Codec())
+codec_registry.register("mock_int4", MockINT4Codec())
+codec_registry.register("mock_corrupt", MockCorruptCodec())
+codec_registry.register("mock_fail", MockFailingCodec())
 
 __all__ = [
     "BF16Codec",
