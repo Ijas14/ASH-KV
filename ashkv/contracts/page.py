@@ -254,7 +254,7 @@ class PageTable:
         """
         n = len(page_ids)
         if not (len(T) == len(S) == len(N) == len(P) == n):
-            return
+            raise ValueError(f"Mismatched score array lengths: page_ids={n}, T={len(T)}, S={len(S)}, N={len(N)}, P={len(P)}")
 
         # Resolve page_ids to row indices. Missing -> -1.
         idx = np.empty(n, dtype=np.int64)

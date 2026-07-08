@@ -31,6 +31,7 @@ class MockAllocator:
         "_budget",
         "_used",
         "_per_tier_used",
+        "_handle_to_tier",
     )
 
     def __init__(self, budget_bytes: int = 10 * 1024 * 1024 * 1024) -> None:
@@ -40,6 +41,7 @@ class MockAllocator:
         self._budget: int = budget_bytes
         self._used: int = 0
         self._per_tier_used: Dict[int, int] = {}
+        self._handle_to_tier: Dict[int, int] = {}
 
     def alloc(self, tier: Tier, size_bytes: int) -> int:
         """Allocate a buffer. Returns handle or -1 on failure."""
@@ -57,6 +59,7 @@ class MockAllocator:
         self._per_tier_used[int(tier)] = (
             self._per_tier_used.get(int(tier), 0) + size_bytes
         )
+        self._handle_to_tier[handle] = int(tier)
         return handle
 
     def free(self, handle: int) -> None:
@@ -64,8 +67,9 @@ class MockAllocator:
         buf = self._buffers.pop(handle, None)
         if buf is not None:
             self._used -= len(buf)
-            # Note: we don't track which tier the buffer was, so
-            # _per_tier_used may drift. This is acceptable for a mock.
+            tier = self._handle_to_tier.pop(handle, None)
+            if tier is not None:
+                self._per_tier_used[tier] -= len(buf)
 
     def read(self, handle: int) -> bytes:
         """Read buffer contents. Returns b'' on invalid handle."""
@@ -93,6 +97,7 @@ class MockAllocator:
         self._next_handle = 1
         self._used = 0
         self._per_tier_used.clear()
+        self._handle_to_tier.clear()
 
     @property
     def used_bytes(self) -> int:
@@ -115,5 +120,6 @@ class MockAllocator:
         self._per_tier_used[int(tier)] = (
             self._per_tier_used.get(int(tier), 0) + len(data)
         )
+        self._handle_to_tier[handle] = int(tier)
         if handle >= self._next_handle:
             self._next_handle = handle + 1

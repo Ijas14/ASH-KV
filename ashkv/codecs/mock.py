@@ -52,14 +52,13 @@ class MockFP8Codec(_BaseMockCodec):
 
     def encode(self, source_bytes: bytes) -> bytes:
         self._encode_calls += 1
-        # Reversible "compression": XOR with 0xAA and pack
-        # This is NOT real compression, but it round-trips perfectly
-        return bytes(b ^ 0xAA for b in source_bytes)
+        # Simulate 2x compression by taking every second byte
+        return bytes(b ^ 0xAA for b in source_bytes[::2])
 
     def decode(self, target_bytes: bytes) -> bytes:
         self._decode_calls += 1
-        # XOR is its own inverse
-        return bytes(b ^ 0xAA for b in target_bytes)
+        # Reconstruct by duplicating
+        return bytes((b ^ 0xAA) for b in target_bytes for _ in range(2))
 
 
 class MockINT8Codec(_BaseMockCodec):

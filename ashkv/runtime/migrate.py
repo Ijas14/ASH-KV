@@ -40,6 +40,7 @@ def migrate(
     codec_table: CodecTable,
     page_handle_lookup: Callable[[int], int],
     page_size_lookup: Callable[[int], int],
+    breaker_registry: Any = None,
 ) -> MigrationResult:
     """Migrate a single page from its current tier to target_tier.
 
@@ -117,6 +118,10 @@ def migrate(
         # that's a compile-time bug, not a runtime failure.
         return _done(MigrationStatus.SKIPPED, current_tier, target_tier, "no codec")
 
+    codec_name = f"{current_tier.name}_to_{target_tier.name}"
+    if breaker_registry is not None and not breaker_registry.is_codec_available(codec_name):
+        return _done(MigrationStatus.SKIPPED, current_tier, target_tier, "breaker tripped")
+
     # --- 5. Read source bytes ---
     src_handle = _safe_call(page_handle_lookup, page_id, default=-1)
     if src_handle < 0:
@@ -129,6 +134,8 @@ def migrate(
     try:
         target_bytes = codec.encode(src_bytes)
     except Exception as e:
+        if breaker_registry is not None:
+            breaker_registry.record_codec_failure(codec_name)
         return _done(MigrationStatus.FAILURE, current_tier, target_tier, f"encode: {e}")
 
     # --- 7. Allocate target buffer ---
@@ -146,12 +153,16 @@ def migrate(
         reconstructed = codec.decode(target_bytes)
     except Exception as e:
         _safe_free(allocator, target_handle)
+        if breaker_registry is not None:
+            breaker_registry.record_codec_failure(codec_name)
         return _done(MigrationStatus.FAILURE, current_tier, target_tier, f"verify decode: {e}")
 
     try:
         new_checksum = codec.checksum(reconstructed)
     except Exception as e:
         _safe_free(allocator, target_handle)
+        if breaker_registry is not None:
+            breaker_registry.record_codec_failure(codec_name)
         return _done(MigrationStatus.FAILURE, current_tier, target_tier, f"verify checksum: {e}")
 
     bf16_checksum = page_table.get_bf16_checksum(page_id)
@@ -160,6 +171,8 @@ def migrate(
         # Quarantine by NOT committing. The caller decides what to do
         # (typically: trip the codec's circuit breaker, fall back to BF16).
         _safe_free(allocator, target_handle)
+        if breaker_registry is not None:
+            breaker_registry.record_codec_failure(codec_name)
         return _done(MigrationStatus.CORRUPT, current_tier, target_tier, "checksum mismatch")
 
     # --- 10. Commit transition ---
@@ -171,6 +184,9 @@ def migrate(
 
     # --- 11. Free source buffer ---
     _safe_free(allocator, src_handle)
+
+    if breaker_registry is not None:
+        breaker_registry.record_codec_success(codec_name)
 
     return _done(MigrationStatus.OK, current_tier, target_tier)
 

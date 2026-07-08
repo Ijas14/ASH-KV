@@ -111,7 +111,7 @@ class TestINT4Codec:
 class TestMockCodecs:
     def test_mock_fp8_roundtrip(self) -> None:
         codec = MockFP8Codec()
-        data = b"hello world " * 100
+        data = bytes(b for b in b"hello world " for _ in range(2)) * 100
         encoded = codec.encode(data)
         decoded = codec.decode(encoded)
         # Mock codec round-trips exactly
