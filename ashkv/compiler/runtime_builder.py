@@ -77,8 +77,8 @@ def compile_score(config: ASHKVConfig) -> ScoreFn:
     return score_fn
 
 
-def compile_controller(config: ASHKVConfig) -> ControllerFn:
-    """Build a controller function closure over thresholds.
+def compile_controller(config: ASHKVConfig, codec_table: CodecTable) -> ControllerFn:
+    """Build a controller function closure over thresholds and topology.
 
     The returned function takes (R, current_tiers, pressure) and
     returns target_tiers. It does NOT read config at call time.
@@ -88,6 +88,26 @@ def compile_controller(config: ASHKVConfig) -> ControllerFn:
     delta = config.delta
     p_emergency = config.p_emergency
 
+    num_tiers = len(Tier)
+    next_colder = np.arange(num_tiers, dtype=np.int8)
+    next_hotter = np.arange(num_tiers, dtype=np.int8)
+    
+    # Default sequential fallback
+    for i in range(num_tiers - 1):
+        next_colder[i] = i + 1
+    for i in range(1, num_tiers):
+        next_hotter[i] = i - 1
+
+    # Override with actual reachable tiers from codec_table
+    for src in Tier:
+        colder_targets = [tgt for (s, tgt) in codec_table.keys() if s == src and int(tgt) > int(src)]
+        if colder_targets:
+            next_colder[int(src)] = int(min(colder_targets, key=int))
+            
+        hotter_targets = [tgt for (s, tgt) in codec_table.keys() if s == src and int(tgt) < int(src)]
+        if hotter_targets:
+            next_hotter[int(src)] = int(max(hotter_targets, key=int))
+
     def controller_fn(
         R: np.ndarray,
         current_tiers: np.ndarray,
@@ -96,6 +116,7 @@ def compile_controller(config: ASHKVConfig) -> ControllerFn:
         return desired_tiers(
             R, current_tiers, pressure,
             theta_high, theta_low, delta, p_emergency,
+            next_colder, next_hotter
         )
 
     return controller_fn
@@ -172,7 +193,7 @@ def build_runtime(
     return CompiledRuntime(
         config=config,
         score_fn=compile_score(config),
-        controller_fn=compile_controller(config),
+        controller_fn=compile_controller(config, codec_table),
         migrate_fn=compile_migrate(),
         codec_table=codec_table,
         telemetry_fn=compile_telemetry(telemetry_enabled),

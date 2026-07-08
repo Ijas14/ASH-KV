@@ -48,6 +48,7 @@ def attempt_bf16_recovery(
     allocator: Allocator,
     bf16_source_lookup,
     bf16_size_lookup,
+    page_handle_lookup=None,
 ) -> FallbackResult:
     """Attempt to recover a page by reconstructing it in BF16.
 
@@ -73,6 +74,14 @@ def attempt_bf16_recovery(
     FallbackResult
         Never raises.
     """
+    # 0. Get the old handle (if possible)
+    old_handle = -1
+    if page_handle_lookup is not None:
+        try:
+            old_handle = page_handle_lookup(page_id)
+        except Exception:
+            pass
+
     # 1. Check the page exists
     current_tier_raw = page_table.get_tier(page_id)
     if current_tier_raw < 0:
@@ -137,6 +146,10 @@ def attempt_bf16_recovery(
             error="commit rejected (pin race)",
         )
 
+    # 6. Free the old corrupt handle
+    if old_handle >= 0:
+        _safe_free(allocator, old_handle)
+
     return FallbackResult(
         level=FallbackLevel.BF16_RECONSTRUCTED,
         page_id=page_id,
@@ -150,6 +163,7 @@ def handle_migration_failure(
     allocator: Allocator,
     bf16_source_lookup,
     bf16_size_lookup,
+    page_handle_lookup=None,
 ) -> FallbackResult:
     """Handle a failed migration result.
 
@@ -184,7 +198,7 @@ def handle_migration_failure(
         # state. Try BF16 recovery to be safe.
         return attempt_bf16_recovery(
             result.page_id, page_table, allocator,
-            bf16_source_lookup, bf16_size_lookup,
+            bf16_source_lookup, bf16_size_lookup, page_handle_lookup
         )
 
     if result.status == MigrationStatus.CORRUPT:
@@ -192,7 +206,7 @@ def handle_migration_failure(
         # definitely wrong. Must recover in BF16.
         return attempt_bf16_recovery(
             result.page_id, page_table, allocator,
-            bf16_source_lookup, bf16_size_lookup,
+            bf16_source_lookup, bf16_size_lookup, page_handle_lookup
         )
 
     # FALLBACK or unknown — no further action

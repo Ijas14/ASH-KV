@@ -37,6 +37,8 @@ def desired_tiers(
     theta_low: float,
     delta: float,
     p_emergency: float,
+    next_colder: np.ndarray,
+    next_hotter: np.ndarray,
 ) -> np.ndarray:
     """Compute target tier for each page, vectorized.
 
@@ -50,6 +52,8 @@ def desired_tiers(
         Allocator pressure scalar in [0, 1].
     theta_high, theta_low, delta, p_emergency : floats
         Controller parameters (captured from config at compile time).
+    next_colder, next_hotter : int8 array, shape (NUM_TIERS,)
+        Precomputed dynamic tier jump lookup arrays from the compiler.
 
     Returns
     -------
@@ -86,9 +90,9 @@ def desired_tiers(
     high_mask = R >= promote_threshold
     not_hottest = current_tiers > int(Tier.BF16)
     promote_mask = high_mask & not_hottest
-    # Promote by one tier (gradual, not jump-to-BF16).
+    # Promote by one dynamic tier (gradual, not jump-to-BF16).
     if promote_mask.any():
-        targets[promote_mask] = current_tiers[promote_mask] - 1
+        targets[promote_mask] = next_hotter[current_tiers[promote_mask]]
 
     # Demotion: only if currently hotter than INT4 and R is low enough.
     # A page at BF16 with R <= demote_threshold => FP8 (one tier down).
@@ -97,6 +101,6 @@ def desired_tiers(
     not_coldest_gpu = current_tiers < int(Tier.INT4)
     demote_mask = low_mask & not_coldest_gpu
     if demote_mask.any():
-        targets[demote_mask] = current_tiers[demote_mask] + 1
+        targets[demote_mask] = next_colder[current_tiers[demote_mask]]
 
     return targets

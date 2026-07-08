@@ -75,7 +75,7 @@ class SGLangShadowAllocator:
             # Create a tensor from bytes and copy it over
             import numpy as np
             byte_tensor = torch.from_numpy(np.frombuffer(data, dtype=np.uint8)).to("cuda")
-            tensor.copy_(byte_tensor)
+            tensor[:len(data)].copy_(byte_tensor)
 
     def pressure(self) -> float:
         """Return the allocator pressure."""

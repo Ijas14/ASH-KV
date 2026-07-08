@@ -66,9 +66,18 @@ class TestScore:
 # --- Controller ---
 
 class TestController:
-    def _params(self) -> tuple[float, float, float, float]:
+    def _params(self) -> tuple[float, float, float, float, np.ndarray, np.ndarray]:
         # theta_high=0.72, theta_low=0.33, delta=0.04, p_emergency=0.95
-        return 0.72, 0.33, 0.04, 0.95
+        num_tiers = len(Tier)
+        next_colder = np.arange(num_tiers, dtype=np.int8)
+        next_hotter = np.arange(num_tiers, dtype=np.int8)
+        
+        for i in range(num_tiers - 1):
+            next_colder[i] = i + 1
+        for i in range(1, num_tiers):
+            next_hotter[i] = i - 1
+            
+        return 0.72, 0.33, 0.04, 0.95, next_colder, next_hotter
 
     def test_high_score_promotes(self) -> None:
         R = np.array([0.9], dtype=np.float32)

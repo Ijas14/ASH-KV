@@ -106,7 +106,7 @@ class INT4Codec:
         int4_vals = flat.reshape(num_groups, gs)
         bf16_vals = int4_vals.astype(np.float16) * scale_factors / 7.0
 
-        return bf16_vals.flatten().tobytes()
+        return bf16_vals.flatten()[:num_values].tobytes()
 
     def checksum(self, raw_bytes: bytes) -> int:
         """Stable checksum."""

@@ -161,54 +161,59 @@ class SGLangHooks:
         if handle < 0:
             return False # Shadow cache OOM, let SGLang evict natively
             
-        shadow_tensor = self.allocator.get_tensor(handle)
-        encode_kernel, decode_kernel = _get_kernels()
-        grid = (num_tokens,)
-        
-        offset = 0
-        for layer_idx in self.compressible_layers:
-            arr_gpu = _get_layer_tensor(sglang_kv_cache, layer_idx, kv_indices)
+        try:
+            shadow_tensor = self.allocator.get_tensor(handle)
+            encode_kernel, decode_kernel = _get_kernels()
+            grid = (num_tokens,)
             
-            scale_factors = torch.empty((num_tokens,), dtype=torch.bfloat16, device="cuda")
-            int8_vals = torch.empty((num_tokens, hidden_dim), dtype=torch.int8, device="cuda")
-            
-            encode_kernel[grid](
-                arr_gpu,
-                int8_vals,
-                scale_factors,
-                num_tokens,
-                hidden_dim,
-            )
-            
-            # Checksum verification round-trip (GPU)
-            bf16_verify = torch.empty((num_tokens, hidden_dim), dtype=torch.bfloat16, device="cuda")
-            decode_kernel[grid](
-                int8_vals,
-                scale_factors,
-                bf16_verify,
-                num_tokens,
-                hidden_dim,
-            )
-            
-            if not torch.allclose(arr_gpu, bf16_verify, atol=1e-2):
-                self.circuit_breaker.record_codec_failure(self.codec_name)
-                self.allocator.free(handle)
-                return False
+            offset = 0
+            for layer_idx in self.compressible_layers:
+                arr_gpu = _get_layer_tensor(sglang_kv_cache, layer_idx, kv_indices)
                 
-            self.circuit_breaker.record_codec_success(self.codec_name)
+                scale_factors = torch.empty((num_tokens,), dtype=torch.bfloat16, device="cuda")
+                int8_vals = torch.empty((num_tokens, hidden_dim), dtype=torch.int8, device="cuda")
+                
+                encode_kernel[grid](
+                    arr_gpu,
+                    int8_vals,
+                    scale_factors,
+                    num_tokens,
+                    hidden_dim,
+                )
+                
+                # Checksum verification round-trip (GPU)
+                bf16_verify = torch.empty((num_tokens, hidden_dim), dtype=torch.bfloat16, device="cuda")
+                decode_kernel[grid](
+                    int8_vals,
+                    scale_factors,
+                    bf16_verify,
+                    num_tokens,
+                    hidden_dim,
+                )
+                
+                if not torch.allclose(arr_gpu, bf16_verify, atol=1e-2):
+                    self.circuit_breaker.record_codec_failure(self.codec_name)
+                    self.allocator.free(handle)
+                    return False
+                    
+                self.circuit_breaker.record_codec_success(self.codec_name)
+                
+                # Store in Shadow Allocator
+                shadow_tensor[offset : offset + scale_bytes_per_layer].copy_(scale_factors.view(torch.uint8))
+                shadow_tensor[offset + scale_bytes_per_layer : offset + layer_stride].copy_(int8_vals.view(torch.uint8))
+                
+                offset += layer_stride
             
-            # Store in Shadow Allocator
-            shadow_tensor[offset : offset + scale_bytes_per_layer].copy_(scale_factors.view(torch.uint8))
-            shadow_tensor[offset + scale_bytes_per_layer : offset + layer_stride].copy_(int8_vals.view(torch.uint8))
+            # Update Node State
+            node.is_compressed = True
+            node.shadow_handle = handle
+            node.kv_indices = None # Drop physical reference
             
-            offset += layer_stride
-        
-        # Update Node State
-        node.is_compressed = True
-        node.shadow_handle = handle
-        node.kv_indices = None # Drop physical reference
-        
-        # Free the physical slots back to SGLang
-        memory_pool.free(kv_indices)
-        
-        return True
+            # Free the physical slots back to SGLang
+            memory_pool.free(kv_indices)
+            
+            return True
+
+        except Exception:
+            self.allocator.free(handle)
+            return False

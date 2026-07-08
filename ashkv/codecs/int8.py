@@ -56,28 +56,29 @@ def _get_kernels():
         BLOCK_SIZE: tl.constexpr,
     ):
         token_id = tl.program_id(0)
-        offsets = tl.arange(0, BLOCK_SIZE)
-        mask = offsets < hidden_dim
 
-        # Load BF16 values
-        vals = tl.load(
-            bf16_ptr + token_id * hidden_dim + offsets,
-            mask=mask,
-            other=0.0,
-        )
+        # Pass 1: Find absolute max across all dimensions
+        abs_max = 0.0
+        for i in range(0, hidden_dim, BLOCK_SIZE):
+            offsets = i + tl.arange(0, BLOCK_SIZE)
+            mask = offsets < hidden_dim
+            vals = tl.load(bf16_ptr + token_id * hidden_dim + offsets, mask=mask, other=0.0)
+            local_max = tl.max(tl.abs(vals), axis=0)
+            abs_max = tl.maximum(abs_max, local_max)
 
-        # Compute abs_max
-        abs_max = tl.max(tl.abs(vals), axis=0)
         abs_max = tl.maximum(abs_max, 1e-8)
-
-        # Store scale factor
         tl.store(scale_ptr + token_id, abs_max)
 
-        # Quantize
-        scaled = vals * 127.0 / abs_max
-        rounded = scaled + tl.where(scaled > 0.0, 0.5, -0.5)
-        int8_vals = tl.cast(rounded, tl.int8)
-        tl.store(int8_ptr + token_id * hidden_dim + offsets, int8_vals, mask=mask)
+        # Pass 2: Quantize and Store
+        for i in range(0, hidden_dim, BLOCK_SIZE):
+            offsets = i + tl.arange(0, BLOCK_SIZE)
+            mask = offsets < hidden_dim
+            vals = tl.load(bf16_ptr + token_id * hidden_dim + offsets, mask=mask, other=0.0)
+            
+            scaled = vals * 127.0 / abs_max
+            rounded = scaled + tl.where(scaled > 0.0, 0.5, -0.5)
+            int8_vals = tl.cast(rounded, tl.int8)
+            tl.store(int8_ptr + token_id * hidden_dim + offsets, int8_vals, mask=mask)
 
     @triton.autotune(
         configs=[
@@ -103,19 +104,16 @@ def _get_kernels():
         BLOCK_SIZE: tl.constexpr,
     ):
         token_id = tl.program_id(0)
-        offsets = tl.arange(0, BLOCK_SIZE)
-        mask = offsets < hidden_dim
-
-        int8_vals = tl.load(
-            int8_ptr + token_id * hidden_dim + offsets,
-            mask=mask,
-            other=0,
-        )
         scale = tl.load(scale_ptr + token_id)
 
-        # Dequantize
-        bf16_vals = tl.cast(int8_vals, tl.float32) * tl.cast(scale, tl.float32) / 127.0
-        tl.store(bf16_ptr + token_id * hidden_dim + offsets, tl.cast(bf16_vals, tl.bfloat16), mask=mask)
+        for i in range(0, hidden_dim, BLOCK_SIZE):
+            offsets = i + tl.arange(0, BLOCK_SIZE)
+            mask = offsets < hidden_dim
+            int8_vals = tl.load(int8_ptr + token_id * hidden_dim + offsets, mask=mask, other=0)
+
+            # Dequantize
+            bf16_vals = tl.cast(int8_vals, tl.float32) * tl.cast(scale, tl.float32) / 127.0
+            tl.store(bf16_ptr + token_id * hidden_dim + offsets, tl.cast(bf16_vals, tl.bfloat16), mask=mask)
 
     _encode_kernel = _int8_encode_kernel
     _decode_kernel = _int8_decode_kernel

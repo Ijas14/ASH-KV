@@ -76,19 +76,20 @@ class HealthMonitor:
             return HealthState.HEALTHY
 
         # Compute migration failure rates (use actual count, not maxlen)
-        corrupt_count = sum(1 for s in self._migration_results if s == 4)  # CORRUPT
-        failure_count = sum(1 for s in self._migration_results if s == 2)  # FAILURE
+        if n >= 50:
+            corrupt_count = sum(1 for s in self._migration_results if s == 4)  # CORRUPT
+            failure_count = sum(1 for s in self._migration_results if s == 2)  # FAILURE
 
-        corrupt_rate = corrupt_count / n
-        failure_rate = failure_count / n
+            corrupt_rate = corrupt_count / n
+            failure_rate = failure_count / n
 
-        # Rule 1: high corruption rate → CRITICAL
-        if corrupt_rate >= 0.10:
-            return HealthState.CRITICAL
+            # Rule 1: high corruption rate → CRITICAL
+            if corrupt_rate >= 0.10:
+                return HealthState.CRITICAL
 
-        # Rule 2: high failure rate → UNHEALTHY
-        if failure_rate >= 0.25:
-            return HealthState.UNHEALTHY
+            # Rule 2: high failure rate → UNHEALTHY
+            if failure_rate >= 0.25:
+                return HealthState.UNHEALTHY
 
         # Rule 3: pressure or breakers → DEGRADED
         if self._tripped_breakers > 0:
