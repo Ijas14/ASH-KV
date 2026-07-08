@@ -139,9 +139,11 @@ class SGLangHooks:
             return True # Already compressed
 
         if not hasattr(node, "kv_indices") or node.kv_indices is None:
+            print("[HOOKS] No kv_indices")
             return False
             
         if not self.circuit_breaker.is_codec_available(self.codec_name):
+            print(f"[HOOKS] Circuit breaker unavailable for {self.codec_name}")
             return False # Circuit breaker tripped, fall back to native eviction
             
         kv_indices = node.kv_indices
@@ -157,7 +159,7 @@ class SGLangHooks:
         layer_stride = scale_bytes_per_layer + int8_vals_per_layer
         total_bytes = layer_stride * len(self.compressible_layers)
         
-        handle = self.allocator.alloc(Tier.INT8, total_bytes)
+        handle = self.allocator.alloc(Tier.FP8, total_bytes)
         if handle < 0:
             return False # Shadow cache OOM, let SGLang evict natively
             
@@ -192,6 +194,7 @@ class SGLangHooks:
                 )
                 
                 if not torch.allclose(arr_gpu, bf16_verify, atol=1e-2):
+                    print(f"[HOOKS] allclose failed! arr_gpu: {arr_gpu.sum()}, bf16_verify: {bf16_verify.sum()}")
                     self.circuit_breaker.record_codec_failure(self.codec_name)
                     self.allocator.free(handle)
                     return False
@@ -199,8 +202,8 @@ class SGLangHooks:
                 self.circuit_breaker.record_codec_success(self.codec_name)
                 
                 # Store in Shadow Allocator
-                shadow_tensor[offset : offset + scale_bytes_per_layer].copy_(scale_factors.view(torch.uint8))
-                shadow_tensor[offset + scale_bytes_per_layer : offset + layer_stride].copy_(int8_vals.view(torch.uint8))
+                shadow_tensor[offset : offset + scale_bytes_per_layer].copy_(scale_factors.view(torch.uint8).flatten())
+                shadow_tensor[offset + scale_bytes_per_layer : offset + layer_stride].copy_(int8_vals.view(torch.uint8).flatten())
                 
                 offset += layer_stride
             
@@ -214,6 +217,7 @@ class SGLangHooks:
             
             return True
 
-        except Exception:
+        except Exception as e:
+            print(f"[HOOKS] Exception occurred: {e}")
             self.allocator.free(handle)
             return False
