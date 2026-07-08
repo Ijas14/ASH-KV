@@ -144,7 +144,8 @@ class SGLangHooks:
             
         num_tokens = getattr(node, "length", 0)
         if num_tokens == 0 and physical_indices is not None:
-            num_tokens = len(physical_indices)           
+            num_tokens = len(physical_indices)    
+            
         if not self.circuit_breaker.is_codec_available(self.codec_name):
             print(f"[HOOKS] Circuit breaker unavailable for {self.codec_name}")
             return False # Circuit breaker tripped, fall back to native eviction
@@ -220,6 +221,15 @@ class SGLangHooks:
             return True
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"[HOOKS] Exception occurred: {e}")
+            try:
+                print(f"[HOOKS Debug] num_tokens: {num_tokens}, len(kv_indices): {len(kv_indices) if kv_indices is not None else 'None'}")
+                print(f"[HOOKS Debug] arr_gpu shape: {arr_gpu.shape if 'arr_gpu' in locals() else 'N/A'}")
+                print(f"[HOOKS Debug] bf16_verify shape: {bf16_verify.shape if 'bf16_verify' in locals() else 'N/A'}")
+                print(f"[HOOKS Debug] node dict: {vars(node) if hasattr(node, '__dict__') else dir(node)}")
+            except:
+                pass
             self.allocator.free(handle)
             return False
