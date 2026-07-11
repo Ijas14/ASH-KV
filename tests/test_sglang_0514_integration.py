@@ -46,46 +46,80 @@ hooks = SGLangHooks(page_table=None, shadow_allocator=shadow_alloc, model_config
 
 # Apply patches to the real SGLang class!
 apply_radix_cache_patches(hooks, sglang_kv_cache, pool)
+# Try importing parameter classes for v0.5.14
+try:
+    from sglang.srt.mem_cache.base_prefix_cache import InsertParams, EvictParams, MatchPrefixParams
+except ImportError:
+    class InsertParams:
+        def __init__(self, key, value): self.key, self.value = key, value
+    class EvictParams:
+        def __init__(self, num_tokens): self.num_tokens = num_tokens
+    class MatchPrefixParams:
+        def __init__(self, key): self.key = key
+
+class MockRadixKey:
+    def __init__(self, token_ids):
+        self.token_ids = token_ids
+    def maybe_to_bigram_view(self, is_eagle): return self, False
+    def page_aligned(self, page_size): return self
+    def __len__(self): return len(self.token_ids)
+    def __hash__(self): return hash(self.token_ids)
+    def __eq__(self, other): return self.token_ids == other.token_ids
+    def __iter__(self): return iter(self.token_ids)
+    def __getitem__(self, item): return self.token_ids[item]
+
 print("Patches applied to real SGLang RadixCache.")
 
-# Create RadixCache
-# 0.5.14 RadixCache takes req_capacity and some other parameters
+# Create RadixCache (try various signatures)
 try:
-    radix_cache = RadixCache(req_capacity=8000, triton_backend="default")
+    radix_cache = RadixCache()
 except TypeError:
     try:
-        # Fallback for some versions
-        radix_cache = RadixCache(req_capacity=8000, block_size=1)
-    except:
-        radix_cache = RadixCache(req_capacity=8000)
+        radix_cache = RadixCache(req_capacity=8000, triton_backend="default")
+    except TypeError:
+        radix_cache = RadixCache(disable=False)
+
+# Mock some internals if RadixCache requires them
+if not hasattr(radix_cache, 'page_size'):
+    radix_cache.page_size = 1
+if not hasattr(radix_cache, 'is_eagle'):
+    radix_cache.is_eagle = False
+if not hasattr(radix_cache, 'token_to_kv_pool_allocator'):
+    radix_cache.token_to_kv_pool_allocator = pool
+if not hasattr(radix_cache, 'evictable_leaves'):
+    radix_cache.evictable_leaves = set()
 
 print("\n--- TEST: INSERTION ---")
-# Simulate system prompt insertion
 num_tokens = 4000
 idx = pool.allocate(num_tokens)
 synthetic_data = torch.randn((num_tokens, 128), dtype=torch.bfloat16, device="cuda")
 sglang_kv_cache[0][idx] = synthetic_data
 
-# In SGLang, insert returns a node (or tuple, etc)
-# v0.5.x takes a token_ids tuple and returns node or node-like
 token_ids = tuple(range(num_tokens))
+radix_key = MockRadixKey(token_ids)
+
 try:
-    node_id = radix_cache.insert(token_ids, idx)
+    radix_cache.insert(InsertParams(key=radix_key, value=idx))
 except TypeError:
-    # Handle dataclass insert if 0.5.14 changed it again
-    from sglang.srt.mem_cache.base_prefix_cache import InsertParams
-    result = radix_cache.insert(InsertParams(key=token_ids, value=idx))
-    node_id = result
+    radix_cache.insert(radix_key, idx)
 
 print(f"Inserted {num_tokens} tokens into RadixCache.")
 
 print("\n--- TEST: EVICTION INTERCEPT ---")
-# Force eviction of the tokens
-evicted = radix_cache.evict(num_tokens)
+# Force eviction using EvictParams
+try:
+    evicted = radix_cache.evict(EvictParams(num_tokens))
+except TypeError:
+    evicted = radix_cache.evict(num_tokens)
+
 print(f"Evicted tokens reported by SGLang: {evicted}")
 
-# Check if the node was compressed and kept alive
-matched = radix_cache.match_prefix(token_ids)
+# Check match_prefix
+try:
+    matched = radix_cache.match_prefix(MatchPrefixParams(radix_key))
+except TypeError:
+    matched = radix_cache.match_prefix(radix_key)
+
 matched_node = getattr(matched, "last_device_node", matched[0] if isinstance(matched, tuple) and len(matched)>0 else None)
 
 if matched_node is not None:
@@ -100,12 +134,12 @@ else:
     print("Node deleted from tree! Evict patch failed.")
 
 print("\n--- TEST: PREFIX MATCH (PROMOTION) ---")
-# Clear VRAM to prove promotion restores it
 sglang_kv_cache.zero_()
 
-# Re-run match prefix which should trigger promotion
-# We already matched above, but let's do it again to test promote logic directly
-result = radix_cache.match_prefix(token_ids)
+try:
+    result = radix_cache.match_prefix(MatchPrefixParams(radix_key))
+except TypeError:
+    result = radix_cache.match_prefix(radix_key)
 
 matched_node = getattr(result, "last_device_node", result[0] if isinstance(result, tuple) and len(result)>0 else None)
 assert matched_node is not None, "Failed to match node"
