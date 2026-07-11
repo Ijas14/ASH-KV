@@ -41,6 +41,9 @@ class TestBF16Codec:
 
 
 class TestINT8Codec:
+    import pytest
+    import torch
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason='Requires GPU')
     def test_roundtrip_preserves_checksum(self) -> None:
         """The INT8 codec must round-trip closely enough that the
         checksum of the reconstructed bytes matches the original.
