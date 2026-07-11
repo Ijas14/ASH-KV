@@ -144,14 +144,13 @@ matched_node = radix_cache.root_node.children.get(child_key, None)
 
 if matched_node is not None:
     has_shadow = getattr(matched_node, "ashkv_shadow_handle", None) is not None
-    is_value_none = matched_node.value is None
     print(f"Node found in tree after evict.")
     print(f"Has shadow handle: {has_shadow}")
-    is_value_none = matched_node.__dict__.get("_value", None) is None
+    matched_node.ashkv_bypass_promote = True
+    is_value_none = matched_node.value is None
+    matched_node.ashkv_bypass_promote = False
+    
     print(f"node.value is None (bypassing auto-promote): {is_value_none}")
-    if not is_value_none:
-        print(f"[DEBUG] _value type: {type(matched_node.__dict__.get('_value'))}")
-        print(f"[DEBUG] _value content: {matched_node.__dict__.get('_value')}")
     assert has_shadow, "Demote hook failed to attach shadow handle!"
     assert is_value_none, "Demote hook failed to clear node.value!"
 else:

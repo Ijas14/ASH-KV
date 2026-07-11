@@ -47,8 +47,9 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
         # 1. Patch TreeNode.value to auto-promote on read
         def get_value(self):
             if getattr(self, "ashkv_shadow_handle", None) is not None:
-                if _HOOKS is not None:
-                    _HOOKS.promote_hook(self, _SGLANG_KV_CACHE, _MEMORY_POOL)
+                if not getattr(self, "ashkv_bypass_promote", False):
+                    if _HOOKS is not None:
+                        _HOOKS.promote_hook(self, _SGLANG_KV_CACHE, _MEMORY_POOL)
             return self.__dict__.get("_value", None)
             
         def set_value(self, val):
