@@ -142,7 +142,7 @@ class SGLangHooks:
         if hasattr(node, "is_compressed") and node.is_compressed:
             return True
             
-        physical_indices = getattr(node, "kv_indices", getattr(node, "value", None))
+        physical_indices = getattr(node, "kv_indices", node.__dict__.get("_value", None))
         if physical_indices is None:
             return False
             

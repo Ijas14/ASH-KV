@@ -39,71 +39,31 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
             logger.error("Failed to import SGLang RadixCache. ASH-KV requires SGLang >= 0.3.0.")
             raise RuntimeError(f"Incompatible SGLang version or missing dependency: {e}")
 
-    original_match_prefix = RadixCache.match_prefix
-    original_evict = RadixCache.evict
-
-    def ashkv_match_prefix(self, *args, **kwargs):
-        """Intercept prefix matching to trigger promote_hook.
+    # We do NOT patch match_prefix directly anymore.
+    # SGLang v0.5.14 crashes if it encounters node.value = None during traversal.
+    # Instead of brittle manual traversals, we use JIT Property Auto-Promotion.
+    
+    if not getattr(TreeNode, "ashkv_patched", False):
+        # 1. Patch TreeNode.value to auto-promote on read
+        def get_value(self):
+            if getattr(self, "ashkv_shadow_handle", None) is not None:
+                if _HOOKS is not None:
+                    _HOOKS.promote_hook(self, _SGLANG_KV_CACHE, _MEMORY_POOL)
+            return self.__dict__.get("_value", None)
+            
+        def set_value(self, val):
+            self.__dict__["_value"] = val
+            
+        TreeNode.value = property(get_value, set_value)
         
-        SGLang v0.5.14 crashes natively if it encounters a node with `value=None`
-        during traversal (torch.cat throws TypeError). Thus, we must perform a
-        pre-emptive traversal to promote any compressed nodes in the matched path
-        before handing execution back to the original function.
-        """
-        with _PATCH_LOCK:
-            # 1. Extract the key
-            key = kwargs.get("key", None)
-            if key is None and len(args) > 0:
-                key = args[0]
-                
-            # Unwrap MatchPrefixParams if present (v0.5.x)
-            if hasattr(key, "key"):
-                key = key.key
+        # 2. Patch TreeNode.evicted so it doesn't trigger auto-promotion during status checks
+        def get_evicted(self):
+            return self.__dict__.get("_value", None) is None and getattr(self, "ashkv_shadow_handle", None) is None
+            
+        TreeNode.evicted = property(get_evicted)
+        TreeNode.ashkv_patched = True
 
-            # 2. Pre-emptively traverse and promote
-            if hasattr(self, "root_node") and key is not None:
-                try:
-                    curr_key = key
-                    page_size = getattr(self, "page_size", 1)
-                    
-                    # Mimic SGLang's exact key preparation
-                    if hasattr(curr_key, "maybe_to_bigram_view"):
-                        is_eagle = getattr(self, "is_eagle", False)
-                        curr_key, _ = curr_key.maybe_to_bigram_view(is_eagle)
-                        
-                    if hasattr(curr_key, "page_aligned"):
-                        curr_key = curr_key.page_aligned(page_size)
-                        
-                    curr_node = self.root_node
-                    
-                    while len(curr_key) > 0:
-                        child_key = curr_key.child_key(page_size) if hasattr(curr_key, "child_key") else curr_key[0]
-                        if child_key not in curr_node.children:
-                            break
-                            
-                        child = curr_node.children[child_key]
-                        
-                        # --- ASH-KV HOOK (Promote) ---
-                        if getattr(child, "ashkv_shadow_handle", None) is not None:
-                            _HOOKS.promote_hook(child, _SGLANG_KV_CACHE, _MEMORY_POOL)
-                            
-                        # Advance traversal
-                        if hasattr(child.key, "match"):
-                            prefix_len = child.key.match(curr_key, page_size=page_size)
-                        else:
-                            break # Fallback if we can't match accurately
-                            
-                        if prefix_len < len(child.key):
-                            break
-                        curr_node = child
-                        curr_key = curr_key[prefix_len:]
-                except Exception as e:
-                    # If our traversal fails, let SGLang try it (it might crash, but we don't break early)
-                    pass
-
-            # 3. Call original now that all nodes in path have physical values restored
-            result = original_match_prefix(self, *args, **kwargs)
-            return result
+    original_evict = RadixCache.evict
 
     def ashkv_evict(self, *args, **kwargs):
         """Intercept eviction to trigger demote_hook.
@@ -152,8 +112,10 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
                 
                 # Calculate tokens before compressing (since compression clears node.value)
                 node_tokens = getattr(node, "length", 0)
-                if node_tokens == 0 and hasattr(node, "value") and node.value is not None:
-                     node_tokens = len(node.value)
+                if node_tokens == 0:
+                     val = node.__dict__.get("_value", None)
+                     if val is not None:
+                         node_tokens = len(val)
                      
                 # Attempt to compress it
                 success = _HOOKS.demote_hook(node, _SGLANG_KV_CACHE, _MEMORY_POOL)
@@ -174,7 +136,7 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
                     self.evictable_size_ -= node_tokens
                 else:
                     # Shadow cache is full (or failed), fallback to actual native eviction
-                    kv_indices = getattr(node, "kv_indices", getattr(node, "value", None))
+                    kv_indices = getattr(node, "kv_indices", node.__dict__.get("_value", None))
                     if kv_indices is not None:
                         if evict_callback:
                             evict_callback(kv_indices)
@@ -195,8 +157,7 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
                     pass
             return freed_tokens
 
-    # Apply the patches
-    RadixCache.match_prefix = ashkv_match_prefix
+    # Patch the RadixCache methods
     RadixCache.evict = ashkv_evict
     
     logger.info("ASH-KV successfully patched SGLang RadixCache.")
