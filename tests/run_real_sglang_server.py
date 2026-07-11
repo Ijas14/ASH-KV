@@ -20,9 +20,12 @@ def main():
     hooks = SGLangHooks(codec_name="int8_default")
     
     # Apply patches BEFORE SGLang initializes
-    print("Applying HiCache patches to SGLang HostKVCache...")
+    print("Applying HiCache patches to SGLang HostKVCache (Main Process)...")
     apply_hicache_patches(hooks)
     print("Patches applied successfully.")
+    
+    # Enable sitecustomize patching for spawned child processes (TpWorker)
+    os.environ["ASHKV_ENABLE_PATCHES"] = "1"
     
     print(f"--- STARTING SGLANG HTTP SERVER ---")
     print(f"Model: {args.model}")
