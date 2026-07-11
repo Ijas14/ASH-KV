@@ -184,8 +184,8 @@ def test_sglang_demote_integration():
     # Demote
     hooks.demote_hook(device_pool, host_pool, host_indices, device_indices, "MHA")
     
-    # Assert CPU pool has data
-    assert host_pool.k_buffer[0].abs().sum() > 0
+    # Assert CPU pool has data (view as uint8 to avoid NaN math on packed bytes)
+    assert host_pool.k_buffer[0].view(torch.uint8).sum() > 0
 
 # -----------------------------------------------------------------------------
 # Test 11: SGLang Promote Integration
