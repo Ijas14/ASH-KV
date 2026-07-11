@@ -134,20 +134,21 @@ except TypeError:
 
 print(f"Evicted tokens reported by SGLang: {evicted}")
 
-# Check match_prefix
-try:
-    matched = radix_cache.match_prefix(MatchPrefixParams(radix_key))
-except TypeError:
-    matched = radix_cache.match_prefix(radix_key)
+# Verify the node is compressed without calling match_prefix (which auto-promotes it!)
+child_key = radix_key.child_key(getattr(radix_cache, "page_size", 1))
+if hasattr(child_key, "__iter__") and not isinstance(child_key, tuple):
+    child_key = child_key[0] # SGLang < 0.5.x fallback
+matched_node = radix_cache.root_node.children.get(child_key, None)
 
-matched_node = getattr(matched, "last_device_node", matched[0] if isinstance(matched, tuple) and len(matched)>0 else None)
+
 
 if matched_node is not None:
     has_shadow = getattr(matched_node, "ashkv_shadow_handle", None) is not None
     is_value_none = matched_node.value is None
     print(f"Node found in tree after evict.")
     print(f"Has shadow handle: {has_shadow}")
-    print(f"node.value is None: {is_value_none}")
+    is_value_none = matched_node.__dict__.get("_value", None) is None
+    print(f"node.value is None (bypassing auto-promote): {is_value_none}")
     assert has_shadow, "Demote hook failed to attach shadow handle!"
     assert is_value_none, "Demote hook failed to clear node.value!"
 else:
