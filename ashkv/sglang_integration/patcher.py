@@ -70,7 +70,7 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
                 # Traverse up the tree to ensure all parent nodes are promoted
                 curr = matched_node
                 while curr is not None:
-                    if getattr(curr, "is_compressed", False):
+                    if getattr(curr, "ashkv_shadow_handle", None) is not None:
                         nodes_to_promote.append(curr)
                     curr = curr.parent
                     

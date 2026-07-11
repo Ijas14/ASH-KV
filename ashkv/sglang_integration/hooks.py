@@ -65,14 +65,16 @@ class SGLangHooks:
             memory_pool: SGLang's TokenToKVPool for allocating fresh slots.
         """
         # 1. Check if node is compressed
-        if not getattr(node, "is_compressed", False) or not hasattr(node, "shadow_handle"):
+        handle = getattr(node, "ashkv_shadow_handle", None)
+        if handle is None:
             return
 
-        handle = node.shadow_handle
         shadow_tensor = self.allocator.get_tensor(handle)
         if shadow_tensor is None:
             # Shadow cache miss / corrupted state
             node.is_compressed = False
+            if hasattr(node, "ashkv_shadow_handle"):
+                del node.ashkv_shadow_handle
             return
 
         # 2. Allocate fresh physical slots from SGLang's memory pool
@@ -120,7 +122,8 @@ class SGLangHooks:
         node.kv_indices = new_indices
         node.value = new_indices
         node.is_compressed = False
-        del node.shadow_handle
+        if hasattr(node, "ashkv_shadow_handle"):
+            del node.ashkv_shadow_handle
         
         # 5. Free shadow memory
         self.allocator.free(handle)
@@ -213,8 +216,9 @@ class SGLangHooks:
             
             # Update Node State
             node.is_compressed = True
-            node.shadow_handle = handle
+            node.ashkv_shadow_handle = handle
             node.kv_indices = None # Drop physical reference
+            node.value = None
             
             # Free the physical slots back to SGLang
             memory_pool.free(kv_indices)
