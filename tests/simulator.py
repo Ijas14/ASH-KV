@@ -97,6 +97,15 @@ class E2ESimulator:
             
             evicted_saliency_avg = saliency[device_indices].mean().item()
             
+            # --- WARMUP (Eliminate Triton JIT Compilation Overhead) ---
+            # Run a dummy demote/promote on a single token to compile the Triton kernels
+            warmup_device_indices = torch.tensor([0], dtype=torch.long, device="cuda")
+            warmup_host_indices = torch.tensor([0], dtype=torch.long, device="cpu")
+            self.hooks.demote_hook(device_pool, host_pool, warmup_host_indices, warmup_device_indices, pool_type="MHA")
+            self.hooks.promote_hook(device_pool, host_pool, warmup_host_indices, warmup_device_indices, layer_id=0, pool_type="MHA")
+            torch.cuda.synchronize()
+            # ----------------------------------------------------------
+            
             # 4. Demote (Compress to INT8 on GPU -> Push to CPU)
             t0 = time.perf_counter()
             handled = self.hooks.demote_hook(device_pool, host_pool, host_indices, device_indices, pool_type="MHA")
