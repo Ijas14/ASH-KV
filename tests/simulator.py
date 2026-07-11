@@ -67,8 +67,8 @@ class E2ESimulator:
         v_demote = v_full[device_indices].reshape(-1, self.head_dim)
         
         # Encode
-        k_packed = codec.encode(k_demote.contiguous().cpu().numpy().tobytes())
-        v_packed = codec.encode(v_demote.contiguous().cpu().numpy().tobytes())
+        k_packed = codec.encode(k_demote.contiguous().detach().cpu().numpy().tobytes())
+        v_packed = codec.encode(v_demote.contiguous().detach().cpu().numpy().tobytes())
         
         compressed_bytes = len(k_packed) + len(v_packed)
         bf16_bytes = k_demote.numel() * 2 + v_demote.numel() * 2
@@ -93,27 +93,28 @@ class E2ESimulator:
         return attn_output.transpose(1, 2).reshape(self.seq_len, self.embed_dim), bf16_bytes, compressed_bytes
 
     def validate(self):
-        hidden_states = torch.randn(self.seq_len, self.embed_dim, dtype=torch.bfloat16, device="cuda")
-        
-        base_out, _, base_k, base_v = self.run_baseline(hidden_states)
-        
-        # We need to warm up Triton for INT8 to avoid timeout/crash during testing
-        from ashkv.codecs.int8 import _get_kernels
-        _get_kernels()
-        
-        int8_out, int8_bf16, int8_comp = self.run_codec_direct(hidden_states, base_k, base_v, "int8_default")
-        int2_out, int2_bf16, int2_comp = self.run_codec_direct(hidden_states, base_k, base_v, "int2_dithered")
-        
-        int8_sim = F.cosine_similarity(base_out.float().view(-1), int8_out.float().view(-1), dim=0).item()
-        int2_sim = F.cosine_similarity(base_out.float().view(-1), int2_out.float().view(-1), dim=0).item()
-        
-        return {
-            "int8_sim": int8_sim,
-            "int2_sim": int2_sim,
-            "int8_bytes": int8_comp,
-            "int2_bytes": int2_comp,
-            "bf16_bytes": int8_bf16
-        }
+        with torch.no_grad():
+            hidden_states = torch.randn(self.seq_len, self.embed_dim, dtype=torch.bfloat16, device="cuda")
+            
+            base_out, _, base_k, base_v = self.run_baseline(hidden_states)
+            
+            # We need to warm up Triton for INT8 to avoid timeout/crash during testing
+            from ashkv.codecs.int8 import _get_kernels
+            _get_kernels()
+            
+            int8_out, int8_bf16, int8_comp = self.run_codec_direct(hidden_states, base_k, base_v, "int8_default")
+            int2_out, int2_bf16, int2_comp = self.run_codec_direct(hidden_states, base_k, base_v, "int2_dithered")
+            
+            int8_sim = F.cosine_similarity(base_out.float().view(-1), int8_out.float().view(-1), dim=0).item()
+            int2_sim = F.cosine_similarity(base_out.float().view(-1), int2_out.float().view(-1), dim=0).item()
+            
+            return {
+                "int8_sim": int8_sim,
+                "int2_sim": int2_sim,
+                "int8_bytes": int8_comp,
+                "int2_bytes": int2_comp,
+                "bf16_bytes": int8_bf16
+            }
 
 if __name__ == "__main__":
     print("[ASH-KV] Booting E2E Validation Simulator...")
