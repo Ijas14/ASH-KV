@@ -8,6 +8,9 @@ slots allocated by SGLang.
 from __future__ import annotations
 
 import torch
+import json
+import os
+import time
 from typing import Any
 
 from ashkv.codecs.int8 import _get_kernels
@@ -26,6 +29,23 @@ class SGLangHooks:
         
         # Using all layers by default for this integration, but can be configured later
         self.compressible_layers = None 
+        
+        self.stats = {
+            "tokens_compressed": 0,
+            "tokens_decompressed": 0,
+            "bytes_saved": 0,
+            "blocks_intercepted": 0,
+            "last_flush_time": 0
+        }
+        self.stats_file = "/tmp/ashkv_stats.json"
+        self._flush_stats()
+
+    def _flush_stats(self):
+        try:
+            with open(self.stats_file, "w") as f:
+                json.dump(self.stats, f)
+        except Exception as e:
+            print(f"[ASH-KV] Failed to flush stats: {e}")
 
     def demote_hook(
         self, 
@@ -112,6 +132,16 @@ class SGLangHooks:
             # Write V to CPU pool
             host_pool.v_buffer[host_indices, layer_idx] = v_padded_bf16
 
+        self.stats["blocks_intercepted"] += 1
+        self.stats["tokens_compressed"] += (num_tokens * len(self.compressible_layers))
+        bf16_bytes = num_tokens * len(self.compressible_layers) * head_num * head_dim * 2 * 2
+        int8_bytes = num_tokens * len(self.compressible_layers) * (head_num * head_dim + scale_bytes) * 2
+        self.stats["bytes_saved"] += (bf16_bytes - int8_bytes)
+        
+        if time.time() - self.stats["last_flush_time"] > 1.0:
+            self._flush_stats()
+            self.stats["last_flush_time"] = time.time()
+
     def promote_hook(
         self, 
         device_pool: Any, 
@@ -184,3 +214,9 @@ class SGLangHooks:
             head_num * head_dim
         )
         device_pool.v_buffer[layer_id][device_indices] = v_gpu
+
+        self.stats["tokens_decompressed"] += num_tokens
+        
+        if time.time() - self.stats["last_flush_time"] > 1.0:
+            self._flush_stats()
+            self.stats["last_flush_time"] = time.time()
