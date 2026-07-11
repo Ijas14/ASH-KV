@@ -118,6 +118,7 @@ class SGLangHooks:
         
         # 4. Update Node state
         node.kv_indices = new_indices
+        node.value = new_indices
         node.is_compressed = False
         del node.shadow_handle
         
