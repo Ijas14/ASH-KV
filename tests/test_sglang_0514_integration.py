@@ -149,6 +149,9 @@ if matched_node is not None:
     print(f"Has shadow handle: {has_shadow}")
     is_value_none = matched_node.__dict__.get("_value", None) is None
     print(f"node.value is None (bypassing auto-promote): {is_value_none}")
+    if not is_value_none:
+        print(f"[DEBUG] _value type: {type(matched_node.__dict__.get('_value'))}")
+        print(f"[DEBUG] _value content: {matched_node.__dict__.get('_value')}")
     assert has_shadow, "Demote hook failed to attach shadow handle!"
     assert is_value_none, "Demote hook failed to clear node.value!"
 else:
