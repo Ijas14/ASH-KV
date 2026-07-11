@@ -51,7 +51,11 @@ try:
     from sglang.srt.mem_cache.base_prefix_cache import InsertParams, EvictParams, MatchPrefixParams
 except ImportError:
     class InsertParams:
-        def __init__(self, key, value): self.key, self.value = key, value
+        def __init__(self, key, value, priority=0, chunked=False): 
+            self.key = key
+            self.value = value
+            self.priority = priority
+            self.chunked = chunked
     class EvictParams:
         def __init__(self, num_tokens): self.num_tokens = num_tokens
     class MatchPrefixParams:
@@ -70,10 +74,11 @@ class MockRadixKey:
 
 print("Patches applied to real SGLang RadixCache.")
 
-# Create RadixCache (try various signatures)
+# Create RadixCache using v0.5.14's create_simulated factory method if available
 try:
-    radix_cache = RadixCache()
-except TypeError:
+    radix_cache = RadixCache.create_simulated(mock_allocator=pool)
+except AttributeError:
+    # Fallbacks for older SGLang versions
     try:
         radix_cache = RadixCache(req_capacity=8000, triton_backend="default")
     except TypeError:
