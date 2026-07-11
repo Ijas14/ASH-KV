@@ -13,9 +13,9 @@ from typing import Any, List
 from ashkv.contracts.tiers import Tier
 from ashkv.contracts.page import PageTable
 from ashkv.compiler.registry import codec_registry
-from ashkv.sglang_integration.allocator import SGLangShadowAllocator
+from ashkv.adapters.sglang.allocator import SGLangShadowAllocator
 from ashkv.codecs.int8 import _get_kernels
-from ashkv.sglang_integration.layer_type_filter import get_compressible_layers
+from ashkv.adapters.sglang.layer_type_filter import get_compressible_layers
 from ashkv.safety.circuit_breaker import CircuitBreakerRegistry
 
 

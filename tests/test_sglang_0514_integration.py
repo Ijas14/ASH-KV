@@ -10,9 +10,9 @@ except ImportError:
     print("SGLang not found. Please run this script on the MI300X instance where SGLang 0.5.14 is installed.")
     sys.exit(0)
 
-from ashkv.sglang_integration.allocator import SGLangShadowAllocator
-from ashkv.sglang_integration.hooks import SGLangHooks
-from ashkv.sglang_integration.patcher import apply_radix_cache_patches
+from ashkv.adapters.sglang.allocator import SGLangShadowAllocator
+from ashkv.adapters.sglang.hooks import SGLangHooks
+from ashkv.adapters.sglang.patcher import apply_radix_cache_patches
 
 class MockTokenToKVPool:
     def __init__(self, capacity=20000):
