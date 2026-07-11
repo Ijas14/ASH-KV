@@ -28,7 +28,7 @@ def main(model_path):
         chunked_prefill_size=4096,
         # HiCache specific settings
         hicache_write_policy="write_through", 
-        hicache_host_memory_size=10, # GBs for host memory (CPU)
+        hicache_size=10, # GBs for host memory (CPU)
     )
     
     print("--- ENGINE STARTED ---")
