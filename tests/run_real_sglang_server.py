@@ -1,8 +1,11 @@
 import sys
+import os
 import argparse
-from sglang.launch_server import launch_server
 from ashkv.adapters.sglang.hooks import SGLangHooks
 from ashkv.adapters.sglang.patcher import apply_hicache_patches
+from sglang.launch_server import run_server
+from sglang.srt.server_args import prepare_server_args
+from sglang.srt.utils import kill_process_tree
 
 def main():
     # Parse the model argument
@@ -25,9 +28,8 @@ def main():
     print(f"Model: {args.model}")
     print(f"Port: {args.port}")
     
-    # Construct sys.argv for the launch_server function
-    sys.argv = [
-        "launch_server",
+    # Construct args for SGLang
+    sglang_args = [
         "--model-path", args.model,
         "--port", str(args.port),
         "--mem-fraction-static", "0.3",  # Force small cache for eviction testing
@@ -35,8 +37,14 @@ def main():
         "--log-level", "info",
     ] + unknown
     
-    # Launch the actual SGLang server!
-    launch_server()
+    # Prepare the ServerArgs exactly how the SGLang CLI does
+    server_args = prepare_server_args(sglang_args)
+    
+    try:
+        # Launch the actual SGLang server!
+        run_server(server_args)
+    finally:
+        kill_process_tree(os.getpid(), include_parent=False)
 
 if __name__ == "__main__":
     main()
