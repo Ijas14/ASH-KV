@@ -78,9 +78,11 @@ class SGLangHooks:
             return
 
         # 2. Allocate fresh physical slots from SGLang's memory pool
-        num_tokens = getattr(node, "length", 0)
-        if num_tokens == 0 and hasattr(node, "value"):
-             num_tokens = len(node.value)
+        num_tokens = getattr(node, "ashkv_compressed_length", getattr(node, "length", 0))
+        if num_tokens == 0:
+             val = node.__dict__.get("_value", None)
+             if val is not None:
+                 num_tokens = len(val)
              
         # Request slots from SGLang
         new_indices = memory_pool.allocate(num_tokens)
@@ -217,6 +219,7 @@ class SGLangHooks:
             # Update Node State
             node.is_compressed = True
             node.ashkv_shadow_handle = handle
+            node.ashkv_compressed_length = num_tokens
             node.kv_indices = None # Drop physical reference
             node.value = None
             
