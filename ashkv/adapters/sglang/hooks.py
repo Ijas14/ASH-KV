@@ -69,6 +69,8 @@ class SGLangHooks:
         int8_gpu = torch.empty((num_tokens, head_num, head_dim), dtype=torch.int8, device=device)
         scales_gpu = torch.empty((num_tokens, head_num), dtype=torch.float16, device=device)
             
+        print(f"[ASH-KV] DEMOTE: Intercepting backup_from_device_all_layer. Compressing {num_tokens} tokens for MHA...")
+        
         for layer_idx in self.compressible_layers:
             # 1. Get GPU BF16 tensor (K and V)
             k_gpu = device_pool.k_buffer[layer_idx][device_indices]
@@ -139,6 +141,8 @@ class SGLangHooks:
         head_dim = device_pool.head_dim
         
         scale_bytes = head_num * 2
+        
+        print(f"[ASH-KV] PROMOTE: Intercepting load_to_device_per_layer. Decompressing {num_tokens} tokens for MHA layer {layer_id}...")
         
         # 1. Read K from CPU pool
         host_k_bf16 = host_pool.k_buffer[host_indices, layer_id].contiguous()

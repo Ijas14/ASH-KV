@@ -99,4 +99,5 @@ def apply_hicache_patches(hooks=None) -> None:
         MLATokenToKVPoolHost.load_to_device_per_layer = mla_load_to_device_per_layer
         MLATokenToKVPoolHost.ashkv_patched = True
 
+    print("[ASH-KV] Patches applied to SGLang HiCache IO.")
     logger.info("ASH-KV successfully patched SGLang HiCache (HostKVCache).")
