@@ -54,21 +54,22 @@ def run_stress_test():
     k_restored = torch.frombuffer(bytearray(k_restored_bytes), dtype=torch.bfloat16).cuda().view_as(k_adv)
     v_restored = torch.frombuffer(bytearray(v_restored_bytes), dtype=torch.bfloat16).cuda().view_as(v_adv)
     
-    # 5. Measure Fidelity (Simulate Attention)
-    q = torch.randn(1, head_num, head_dim, dtype=torch.bfloat16, device="cuda") * 0.02
+    # 5. Measure Fidelity (Simulate Full Sequence Attention)
+    # Using seq_len = 1024 for Q instead of 1 to prevent single-query Softmax masking
+    q = torch.randn(seq_len, head_num, head_dim, dtype=torch.bfloat16, device="cuda") * 0.02
     
     # Baseline Attention (Infinite VRAM)
     attn_base = F.scaled_dot_product_attention(
-        q.unsqueeze(0).transpose(1, 2), 
-        k_adv.unsqueeze(0).transpose(1, 2), 
-        v_adv.unsqueeze(0).transpose(1, 2)
+        q.transpose(0, 1), 
+        k_adv.transpose(0, 1), 
+        v_adv.transpose(0, 1)
     )
     
     # Compressed Attention (Dithered INT2)
     attn_int2 = F.scaled_dot_product_attention(
-        q.unsqueeze(0).transpose(1, 2), 
-        k_restored.unsqueeze(0).transpose(1, 2), 
-        v_restored.unsqueeze(0).transpose(1, 2)
+        q.transpose(0, 1), 
+        k_restored.transpose(0, 1), 
+        v_restored.transpose(0, 1)
     )
     
     cos_sim = F.cosine_similarity(attn_base.float().view(-1), attn_int2.float().view(-1), dim=0).item()
