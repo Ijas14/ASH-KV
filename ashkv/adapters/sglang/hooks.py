@@ -37,7 +37,8 @@ class SGLangHooks:
             "blocks_intercepted": 0,
             "last_flush_time": 0
         }
-        self.stats_file = "/tmp/ashkv_stats.json"
+        os.makedirs("stats", exist_ok=True)
+        self.stats_file = "stats/ashkv_stats.json"
         self._flush_stats()
 
     def _flush_stats(self):

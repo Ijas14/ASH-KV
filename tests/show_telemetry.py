@@ -1,7 +1,7 @@
 import json
 import os
 
-STATS_FILE = "/tmp/ashkv_stats.json"
+STATS_FILE = "stats/ashkv_stats.json"
 
 def main():
     if not os.path.exists(STATS_FILE):
