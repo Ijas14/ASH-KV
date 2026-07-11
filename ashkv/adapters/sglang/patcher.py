@@ -45,27 +45,29 @@ def apply_hicache_patches(hooks=None) -> None:
         original_mha_load = MHATokenToKVPoolHost.load_to_device_per_layer
 
         def mha_backup_from_device_all_layer(self, device_pool, host_indices, device_indices, io_backend):
-            # Intercept GPU -> CPU offload
-            # Demote hook will compress `device_indices` from `device_pool` into `host_indices` in `self`
-            _HOOKS.demote_hook(
+            handled = _HOOKS.demote_hook(
                 device_pool=device_pool,
                 host_pool=self,
                 host_indices=host_indices,
                 device_indices=device_indices,
-                pool_type="MHA"
+                pool_type="MHA",
+                io_backend=io_backend
             )
+            if not handled:
+                original_mha_backup(self, device_pool, host_indices, device_indices, io_backend)
 
         def mha_load_to_device_per_layer(self, device_pool, host_indices, device_indices, layer_id, io_backend):
-            # Intercept CPU -> GPU restore
-            # Promote hook will decompress `host_indices` from `self` into `device_indices` in `device_pool` for `layer_id`
-            _HOOKS.promote_hook(
+            handled = _HOOKS.promote_hook(
                 device_pool=device_pool,
                 host_pool=self,
                 host_indices=host_indices,
                 device_indices=device_indices,
                 layer_id=layer_id,
-                pool_type="MHA"
+                pool_type="MHA",
+                io_backend=io_backend
             )
+            if not handled:
+                original_mha_load(self, device_pool, host_indices, device_indices, layer_id, io_backend)
 
         MHATokenToKVPoolHost.backup_from_device_all_layer = mha_backup_from_device_all_layer
         MHATokenToKVPoolHost.load_to_device_per_layer = mha_load_to_device_per_layer
@@ -77,23 +79,29 @@ def apply_hicache_patches(hooks=None) -> None:
         original_mla_load = MLATokenToKVPoolHost.load_to_device_per_layer
 
         def mla_backup_from_device_all_layer(self, device_pool, host_indices, device_indices, io_backend):
-            _HOOKS.demote_hook(
+            handled = _HOOKS.demote_hook(
                 device_pool=device_pool,
                 host_pool=self,
                 host_indices=host_indices,
                 device_indices=device_indices,
-                pool_type="MLA"
+                pool_type="MLA",
+                io_backend=io_backend
             )
+            if not handled:
+                original_mla_backup(self, device_pool, host_indices, device_indices, io_backend)
 
         def mla_load_to_device_per_layer(self, device_pool, host_indices, device_indices, layer_id, io_backend):
-            _HOOKS.promote_hook(
+            handled = _HOOKS.promote_hook(
                 device_pool=device_pool,
                 host_pool=self,
                 host_indices=host_indices,
                 device_indices=device_indices,
                 layer_id=layer_id,
-                pool_type="MLA"
+                pool_type="MLA",
+                io_backend=io_backend
             )
+            if not handled:
+                original_mla_load(self, device_pool, host_indices, device_indices, layer_id, io_backend)
 
         MLATokenToKVPoolHost.backup_from_device_all_layer = mla_backup_from_device_all_layer
         MLATokenToKVPoolHost.load_to_device_per_layer = mla_load_to_device_per_layer

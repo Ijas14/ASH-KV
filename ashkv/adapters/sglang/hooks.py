@@ -54,20 +54,21 @@ class SGLangHooks:
         host_pool: Any, 
         host_indices: torch.Tensor, 
         device_indices: torch.Tensor, 
-        pool_type: str
-    ) -> None:
+        pool_type: str,
+        io_backend: Any = None
+    ) -> bool:
         """GPU -> CPU Interceptor (Compression)
         
         Called by SGLang when evicting a KV node to CPU (write-through/write-back).
         We compress the BF16 tensor on the GPU and write INT8 into the CPU host_pool.
         """
         if pool_type != "MHA":
-            # For now, only support MHA. Fallback to native copy for others.
-            return
+            # Decline unsupported pool types. Patcher will fall back to native copy.
+            return False
             
         num_tokens = len(device_indices)
         if num_tokens == 0:
-            return
+            return False
             
         encode_kernel, _ = _get_kernels()
         grid = (num_tokens,)
@@ -92,46 +93,52 @@ class SGLangHooks:
             
         print(f"[ASH-KV] DEMOTE: Intercepting backup_from_device_all_layer. Compressing {num_tokens} tokens for MHA...")
         
-        for layer_idx in self.compressible_layers:
+        # TODO: Extract and pass CUDA stream from io_backend to Triton kernel for async execution
+        for layer_idx in range(layer_num):
             # 1. Get GPU BF16 tensor (K and V)
             k_gpu = device_pool.k_buffer[layer_idx][device_indices]
             v_gpu = device_pool.v_buffer[layer_idx][device_indices]
             
-            # 2. Compress K
-            encode_kernel[grid](
-                k_gpu.view(num_tokens, -1),
-                int8_gpu.view(num_tokens, -1),
-                scales_gpu.view(num_tokens, -1),
-                num_tokens,
-                head_num * head_dim
-            )
-            
-            # Pack K to CPU
-            k_packed = torch.zeros((num_tokens, slot_bytes), dtype=torch.uint8, device="cpu", pin_memory=torch.cuda.is_available())
-            k_packed[:, :scale_bytes] = scales_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
-            k_packed[:, scale_bytes:total_bytes] = int8_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
-            k_padded_bf16 = k_packed.view(torch.bfloat16).view(num_tokens, head_num, head_dim)
-            
-            # Write K to CPU pool
-            host_pool.k_buffer[host_indices, layer_idx] = k_padded_bf16
-            
-            # 3. Compress V
-            encode_kernel[grid](
-                v_gpu.view(num_tokens, -1),
-                int8_gpu.view(num_tokens, -1),
-                scales_gpu.view(num_tokens, -1),
-                num_tokens,
-                head_num * head_dim
-            )
-            
-            # Pack V to CPU
-            v_packed = torch.zeros((num_tokens, slot_bytes), dtype=torch.uint8, device="cpu", pin_memory=torch.cuda.is_available())
-            v_packed[:, :scale_bytes] = scales_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
-            v_packed[:, scale_bytes:total_bytes] = int8_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
-            v_padded_bf16 = v_packed.view(torch.bfloat16).view(num_tokens, head_num, head_dim)
-            
-            # Write V to CPU pool
-            host_pool.v_buffer[host_indices, layer_idx] = v_padded_bf16
+            if layer_idx in self.compressible_layers:
+                # 2. Compress K
+                encode_kernel[grid](
+                    k_gpu.view(num_tokens, -1),
+                    int8_gpu.view(num_tokens, -1),
+                    scales_gpu.view(num_tokens, -1),
+                    num_tokens,
+                    head_num * head_dim
+                )
+                
+                # Pack K to CPU
+                k_packed = torch.zeros((num_tokens, slot_bytes), dtype=torch.uint8, device="cpu", pin_memory=torch.cuda.is_available())
+                k_packed[:, :scale_bytes] = scales_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+                k_packed[:, scale_bytes:total_bytes] = int8_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+                k_padded_bf16 = k_packed.view(torch.bfloat16).view(num_tokens, head_num, head_dim)
+                
+                # Write K to CPU pool
+                host_pool.k_buffer[host_indices, layer_idx] = k_padded_bf16
+                
+                # 3. Compress V
+                encode_kernel[grid](
+                    v_gpu.view(num_tokens, -1),
+                    int8_gpu.view(num_tokens, -1),
+                    scales_gpu.view(num_tokens, -1),
+                    num_tokens,
+                    head_num * head_dim
+                )
+                
+                # Pack V to CPU
+                v_packed = torch.zeros((num_tokens, slot_bytes), dtype=torch.uint8, device="cpu", pin_memory=torch.cuda.is_available())
+                v_packed[:, :scale_bytes] = scales_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+                v_packed[:, scale_bytes:total_bytes] = int8_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+                v_padded_bf16 = v_packed.view(torch.bfloat16).view(num_tokens, head_num, head_dim)
+                
+                # Write V to CPU pool
+                host_pool.v_buffer[host_indices, layer_idx] = v_padded_bf16
+            else:
+                # Native copy for non-compressible layers
+                host_pool.k_buffer[host_indices, layer_idx].copy_(k_gpu, non_blocking=True)
+                host_pool.v_buffer[host_indices, layer_idx].copy_(v_gpu, non_blocking=True)
 
         self.stats["blocks_intercepted"] += 1
         self.stats["tokens_compressed"] += (num_tokens * len(self.compressible_layers))
@@ -142,6 +149,8 @@ class SGLangHooks:
         if time.time() - self.stats["last_flush_time"] > 1.0:
             self._flush_stats()
             self.stats["last_flush_time"] = time.time()
+            
+        return True
 
     def promote_hook(
         self, 
@@ -150,8 +159,9 @@ class SGLangHooks:
         host_indices: torch.Tensor, 
         device_indices: torch.Tensor, 
         layer_id: int, 
-        pool_type: str
-    ) -> None:
+        pool_type: str,
+        io_backend: Any = None
+    ) -> bool:
         """CPU -> GPU Interceptor (Decompression)
         
         Called by SGLang when a prefix matches an offloaded node.
@@ -159,11 +169,21 @@ class SGLangHooks:
         Note: SGLang loads layer-by-layer, so this is called per-layer.
         """
         if pool_type != "MHA":
-            return
+            return False
             
         num_tokens = len(device_indices)
         if num_tokens == 0:
-            return
+            return False
+            
+        if self.compressible_layers is not None and layer_id not in self.compressible_layers:
+            # Native copy for non-compressible layers
+            device_pool.k_buffer[layer_id][device_indices].copy_(
+                host_pool.k_buffer[host_indices, layer_id], non_blocking=True
+            )
+            device_pool.v_buffer[layer_id][device_indices].copy_(
+                host_pool.v_buffer[host_indices, layer_id], non_blocking=True
+            )
+            return True
             
         _, decode_kernel = _get_kernels()
         grid = (num_tokens,)
@@ -221,3 +241,5 @@ class SGLangHooks:
         if time.time() - self.stats["last_flush_time"] > 1.0:
             self._flush_stats()
             self.stats["last_flush_time"] = time.time()
+            
+        return True
