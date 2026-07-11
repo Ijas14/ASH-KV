@@ -1,71 +1,42 @@
-import sglang
-import time
+import sys
 import argparse
+from sglang.launch_server import launch_server
 from ashkv.adapters.sglang.hooks import SGLangHooks
 from ashkv.adapters.sglang.patcher import apply_hicache_patches
 
-def main(model_path):
-    print("--- INITIALIZING ASH-KV ---")
+def main():
+    # Parse the model argument
+    parser = argparse.ArgumentParser(description="Start SGLang Server with ASH-KV Patches")
+    parser.add_argument("--model", type=str, required=True, help="Path to model (e.g. Qwen/Qwen2.5-0.5B-Instruct)")
+    parser.add_argument("--port", type=int, default=30000, help="Port to run the server on")
     
-    # 1. Initialize our hooks
-    # We use int8_default codec, which uses Triton under the hood
+    # We use parse_known_args in case the user passes standard sglang args
+    args, unknown = parser.parse_known_args()
+
+    print("--- INITIALIZING ASH-KV ---")
     hooks = SGLangHooks(codec_name="int8_default")
     
-    # 2. Apply the HiCache patches BEFORE SGLang initializes its workers
+    # Apply patches BEFORE SGLang initializes
     print("Applying HiCache patches to SGLang HostKVCache...")
     apply_hicache_patches(hooks)
     print("Patches applied successfully.")
-
-    print(f"--- STARTING SGLANG ENGINE ---")
-    print(f"Model: {model_path}")
-    print(f"Note: Enforcing --hicache-write-policy write_through")
     
-    # 3. Start the SGLang Engine
-    # We MUST pass hicache_write_policy="write_through" to force CPU offload
-    engine = sglang.Engine(
-        model_path=model_path,
-        mem_fraction_static=0.7,
-        chunked_prefill_size=4096,
-        # HiCache specific settings
-        hicache_write_policy="write_through", 
-        hicache_size=10, # GBs for host memory (CPU)
-    )
+    print(f"--- STARTING SGLANG HTTP SERVER ---")
+    print(f"Model: {args.model}")
+    print(f"Port: {args.port}")
     
-    print("--- ENGINE STARTED ---")
+    # Construct sys.argv for the launch_server function
+    sys.argv = [
+        "launch_server",
+        "--model-path", args.model,
+        "--port", str(args.port),
+        "--mem-fraction-static", "0.3",  # Force small cache for eviction testing
+        "--hicache-write-policy", "write_through",  # Trigger for ASH-KV
+        "--log-level", "info",
+    ] + unknown
     
-    # 4. Generate some text to populate the KV Cache
-    prompt1 = "The history of the Roman Empire is a fascinating subject. It all began when"
-    print(f"Prompt 1 (Prefill): {prompt1}")
-    
-    start = time.time()
-    out1 = engine.generate(prompt1, sampling_params={"max_new_tokens": 100})
-    print(f"Generation took: {time.time() - start:.2f}s")
-    print(f"Output: {out1['text']}\n")
-    
-    print("--- WAITING FOR OFF-LOAD ---")
-    print("Since write_through is enabled, SGLang's background thread is currently calling")
-    print("backup_from_device_all_layer, which is being intercepted by ASH-KV demote_hook to compress to INT8.")
-    time.sleep(5) # Wait for the async write-through to finish
-    
-    # 5. Send a prefix-matched prompt
-    # This should trigger a cache hit, but if the GPU slots were evicted, 
-    # it will pull from CPU (HiCache), triggering our promote_hook.
-    prompt2 = prompt1 + " " + out1['text'] + " However, the fall of the empire was"
-    print(f"Prompt 2 (Cache Hit): {prompt2}")
-    
-    start = time.time()
-    out2 = engine.generate(prompt2, sampling_params={"max_new_tokens": 100})
-    print(f"Generation took: {time.time() - start:.2f}s")
-    print(f"Output: {out2['text']}\n")
-    
-    print("--- SUCCESS ---")
-    print("If you didn't get any crashes or OOMs, the INT8 compression/decompression")
-    print("successfully executed on the real GPU tensors during the HiCache IO!")
-    
-    engine.shutdown()
+    # Launch the actual SGLang server!
+    launch_server()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, required=True, help="Path to model (e.g. meta-llama/Meta-Llama-3-8B-Instruct)")
-    args = parser.parse_args()
-    main(args.model)
+    main()
