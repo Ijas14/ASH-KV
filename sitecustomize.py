@@ -2,8 +2,11 @@ import sys
 import threading
 import time
 
+import os
+
 def delayed_patch():
     # Log to a persistent file so we can prove this thread is running in the Ray worker
+    os.makedirs("stats", exist_ok=True)
     with open("stats/ashkv_patch.log", "a") as f:
         f.write("[ASH-KV] Background thread started in process.\n")
         
