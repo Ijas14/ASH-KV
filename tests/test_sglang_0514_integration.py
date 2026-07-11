@@ -65,13 +65,27 @@ except ImportError:
 class MockRadixKey:
     def __init__(self, token_ids):
         self.token_ids = token_ids
-    def maybe_to_bigram_view(self, is_eagle): return self, False
+    def maybe_to_bigram_view(self, is_eagle, value=None): return self, value
     def page_aligned(self, page_size): return self
     def __len__(self): return len(self.token_ids)
     def __hash__(self): return hash(self.token_ids)
     def __eq__(self, other): return self.token_ids == other.token_ids
     def __iter__(self): return iter(self.token_ids)
     def __getitem__(self, item): return self.token_ids[item]
+    def child_key(self, page_size=1): return self.token_ids[0] if len(self.token_ids)>0 else None
+    def match(self, other, page_size=1):
+        for i, (a, b) in enumerate(zip(self.token_ids, other.token_ids)):
+            if a != b: return i
+        return min(len(self.token_ids), len(other.token_ids))
+
+try:
+    from sglang.srt.mem_cache.radix_cache import RadixKey
+    import array
+    def create_radix_key(token_ids):
+        return RadixKey(token_ids=array.array("q", token_ids), extra_key=None)
+except ImportError:
+    def create_radix_key(token_ids):
+        return MockRadixKey(token_ids)
 
 print("Patches applied to real SGLang RadixCache.")
 
@@ -102,7 +116,7 @@ synthetic_data = torch.randn((num_tokens, 128), dtype=torch.bfloat16, device="cu
 sglang_kv_cache[0][idx] = synthetic_data
 
 token_ids = tuple(range(num_tokens))
-radix_key = MockRadixKey(token_ids)
+radix_key = create_radix_key(token_ids)
 
 try:
     radix_cache.insert(InsertParams(key=radix_key, value=idx))
