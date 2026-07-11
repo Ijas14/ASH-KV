@@ -59,14 +59,14 @@ def run_stress_test():
     
     # Baseline Attention (Infinite VRAM)
     attn_base = F.scaled_dot_product_attention(
-        q.transpose(1, 2), 
+        q.unsqueeze(0).transpose(1, 2), 
         k_adv.unsqueeze(0).transpose(1, 2), 
         v_adv.unsqueeze(0).transpose(1, 2)
     )
     
     # Compressed Attention (Dithered INT2)
     attn_int2 = F.scaled_dot_product_attention(
-        q.transpose(1, 2), 
+        q.unsqueeze(0).transpose(1, 2), 
         k_restored.unsqueeze(0).transpose(1, 2), 
         v_restored.unsqueeze(0).transpose(1, 2)
     )
