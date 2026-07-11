@@ -125,12 +125,13 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
                 else:
                     node = queue[0]
                 
+                # Calculate tokens before compressing (since compression clears node.value)
+                node_tokens = getattr(node, "length", 0)
+                if node_tokens == 0 and hasattr(node, "value") and node.value is not None:
+                     node_tokens = len(node.value)
+                     
                 # Attempt to compress it
                 success = _HOOKS.demote_hook(node, _SGLANG_KV_CACHE, _MEMORY_POOL)
-                
-                node_tokens = getattr(node, "length", 0)
-                if node_tokens == 0 and hasattr(node, "value"):
-                     node_tokens = len(node.value)
                      
                 if success:
                     # Node is compressed and physical slots freed internally by demote_hook.
