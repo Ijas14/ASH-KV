@@ -32,7 +32,6 @@ def main():
     sglang_args = [
         "--model-path", args.model,
         "--port", str(args.port),
-        "--mem-fraction-static", "0.3",  # Force small cache for eviction testing
         "--hicache-write-policy", "write_through",  # Trigger for ASH-KV
         "--log-level", "info",
     ] + unknown
