@@ -55,7 +55,7 @@ class DitheredINT2Codec:
         outlier_mask = torch.abs(arr_grouped - group_mean) > 3 * group_std
         
         outlier_indices = torch.nonzero(outlier_mask.view(-1))[:, 0].int().cpu().numpy()
-        outlier_values = arr.view(-1)[outlier_mask.view(-1)].bfloat16().cpu().numpy()
+        outlier_values = arr.view(-1)[outlier_mask.view(-1)].bfloat16().view(torch.int16).cpu().numpy()
         num_outliers = len(outlier_indices)
         
         arr_inliers = arr_grouped.clone()
@@ -81,7 +81,7 @@ class DitheredINT2Codec:
         packed = (v0 << 6) | (v1 << 4) | (v2 << 2) | v3
         
         header = struct.pack("<II", num_tokens, num_outliers)
-        scales_bytes = delta.bfloat16().cpu().numpy().tobytes()
+        scales_bytes = delta.bfloat16().view(torch.int16).cpu().numpy().tobytes()
         packed_bytes = packed.cpu().numpy().tobytes()
         
         return header + scales_bytes + outlier_indices.tobytes() + outlier_values.tobytes() + packed_bytes
@@ -134,4 +134,4 @@ class DitheredINT2Codec:
         if num_outliers > 0:
             dequantized_flat[outlier_indices] = outlier_values
             
-        return dequantized_flat.bfloat16().cpu().numpy().tobytes()
+        return dequantized_flat.bfloat16().view(torch.int16).cpu().numpy().tobytes()
