@@ -21,13 +21,14 @@ class DitheredINT2Codec:
     [int2_packed_values (uint8)]
     """
 
-    __slots__ = ("_encode_calls", "_decode_calls", "_hidden_dim", "_group_size")
+    __slots__ = ("_encode_calls", "_decode_calls", "_hidden_dim", "_group_size", "_sigma")
 
-    def __init__(self, hidden_dim: int = 128) -> None:
+    def __init__(self, hidden_dim: int = 128, group_size: int = 32, sigma: float = 3.0) -> None:
         self._encode_calls = 0
         self._decode_calls = 0
         self._hidden_dim = hidden_dim
-        self._group_size = 32
+        self._group_size = group_size
+        self._sigma = sigma
 
     def checksum(self, raw_bytes: bytes) -> int:
         h = hashlib.sha256(raw_bytes).digest()
@@ -48,11 +49,11 @@ class DitheredINT2Codec:
         num_groups = self._hidden_dim // self._group_size
         arr_grouped = arr.view(num_tokens, num_groups, self._group_size)
         
-        # 1. Outlier Isolation (3-Sigma Rule per group)
+        # 1. Outlier Isolation (Sigma Rule per group)
         group_mean = arr_grouped.mean(dim=2, keepdim=True)
         group_std = arr_grouped.std(dim=2, keepdim=True) + 1e-8
         
-        outlier_mask = torch.abs(arr_grouped - group_mean) > 3 * group_std
+        outlier_mask = torch.abs(arr_grouped - group_mean) > self._sigma * group_std
         
         outlier_indices = torch.nonzero(outlier_mask.view(-1))[:, 0].int().cpu().numpy()
         outlier_values = arr.view(-1)[outlier_mask.view(-1)].bfloat16().view(torch.int16).cpu().numpy()
