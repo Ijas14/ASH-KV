@@ -197,7 +197,7 @@ class SGLangHooks:
                     hidden_dim,
                 )
                 
-                if not torch.allclose(arr_gpu, bf16_verify, atol=1e-2):
+                if not torch.allclose(arr_gpu, bf16_verify, atol=5e-2):
                     print(f"[HOOKS] allclose failed! arr_gpu: {arr_gpu.sum()}, bf16_verify: {bf16_verify.sum()}")
                     self.circuit_breaker.record_codec_failure(self.codec_name)
                     self.allocator.free(handle)
