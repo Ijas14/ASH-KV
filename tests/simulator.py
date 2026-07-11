@@ -67,8 +67,8 @@ class E2ESimulator:
         v_demote = v_full[device_indices].reshape(-1, self.head_dim)
         
         # Encode
-        k_packed = codec.encode(k_demote.contiguous().detach().cpu().numpy().tobytes())
-        v_packed = codec.encode(v_demote.contiguous().detach().cpu().numpy().tobytes())
+        k_packed = codec.encode(k_demote.contiguous().detach().view(torch.int16).cpu().numpy().tobytes())
+        v_packed = codec.encode(v_demote.contiguous().detach().view(torch.int16).cpu().numpy().tobytes())
         
         compressed_bytes = len(k_packed) + len(v_packed)
         bf16_bytes = k_demote.numel() * 2 + v_demote.numel() * 2
