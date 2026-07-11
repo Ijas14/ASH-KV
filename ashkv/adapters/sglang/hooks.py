@@ -1,243 +1,182 @@
-"""SGLang Integration Hooks (Node-Level).
+"""SGLang Integration Hooks (HiCache IO Interception).
 
-Unlike earlier serving engines which manage blocks independently, SGLang manages KV cache
-via a Radix Tree. These hooks operate directly on `RadixNode` instances.
-When a node is evicted by SGLang, it is demoted to INT8 instead of being deleted.
-When a node is hit by a prefix match, it is promoted back to BF16.
+These hooks intercept SGLang's native CPU offload mechanism (HiCache).
+Instead of transferring massive BF16 tensors across the PCIe bus, we compress
+the KV cache to INT8 on the GPU, and write the compact byte stream into the CPU
+slots allocated by SGLang.
 """
 from __future__ import annotations
 
 import torch
-from typing import Any, List
+from typing import Any
 
-from ashkv.contracts.tiers import Tier
-from ashkv.contracts.page import PageTable
-from ashkv.compiler.registry import codec_registry
-from ashkv.adapters.sglang.allocator import SGLangShadowAllocator
 from ashkv.codecs.int8 import _get_kernels
-from ashkv.adapters.sglang.layer_type_filter import get_compressible_layers
 from ashkv.safety.circuit_breaker import CircuitBreakerRegistry
 
 
-def _get_layer_tensor(sglang_kv_cache: Any, layer_idx: int, kv_indices: torch.Tensor) -> torch.Tensor:
-    """Safely index into the SGLang KV cache, handling lists or multi-dimensional tensors."""
-    if isinstance(sglang_kv_cache, (list, tuple)):
-        # List of layer tensors, each [num_slots, ...]
-        return sglang_kv_cache[layer_idx][kv_indices]
-    else:
-        # Single tensor [num_layers, num_slots, ...]
-        return sglang_kv_cache[layer_idx, kv_indices]
-
-def _set_layer_tensor(sglang_kv_cache: Any, layer_idx: int, kv_indices: torch.Tensor, values: torch.Tensor) -> None:
-    """Safely set values into the SGLang KV cache."""
-    if isinstance(sglang_kv_cache, (list, tuple)):
-        sglang_kv_cache[layer_idx][kv_indices] = values
-    else:
-        sglang_kv_cache[layer_idx, kv_indices] = values
-
-
 class SGLangHooks:
-    """Manages the boundary between SGLang's RadixCache and ASH-KV."""
+    """Manages the HiCache IO interception between SGLang's GPU and CPU memory pools."""
 
     def __init__(
         self,
-        page_table: PageTable,
-        shadow_allocator: SGLangShadowAllocator,
-        model_config: Any,
         codec_name: str = "int8_default",
     ):
-        self.page_table = page_table
-        self.allocator = shadow_allocator
         self.codec_name = codec_name
-        self.codec = codec_registry.get(codec_name)
-        if self.codec is None:
-            raise ValueError(f"Codec {codec_name} not found in registry.")
-            
-        self.compressible_layers = get_compressible_layers(model_config)
         self.circuit_breaker = CircuitBreakerRegistry()
-
-    def promote_hook(self, node: Any, sglang_kv_cache: Any, memory_pool: Any) -> None:
-        """Pre-decode: Restore a compressed RadixNode to BF16.
         
-        Args:
-            node: SGLang RadixNode instance.
-            sglang_kv_cache: SGLang's underlying bfloat16 KV cache tensor(s).
-            memory_pool: SGLang's TokenToKVPool for allocating fresh slots.
+        # Using all layers by default for this integration, but can be configured later
+        self.compressible_layers = None 
+
+    def demote_hook(
+        self, 
+        device_pool: Any, 
+        host_pool: Any, 
+        host_indices: torch.Tensor, 
+        device_indices: torch.Tensor, 
+        pool_type: str
+    ) -> None:
+        """GPU -> CPU Interceptor (Compression)
+        
+        Called by SGLang when evicting a KV node to CPU (write-through/write-back).
+        We compress the BF16 tensor on the GPU and write INT8 into the CPU host_pool.
         """
-        # 1. Check if node is compressed
-        handle = getattr(node, "ashkv_shadow_handle", None)
-        if handle is None:
+        if pool_type != "MHA":
+            # For now, only support MHA. Fallback to native copy for others.
             return
-
-        shadow_tensor = self.allocator.get_tensor(handle)
-        if shadow_tensor is None:
-            # Shadow cache miss / corrupted state
-            node.is_compressed = False
-            if hasattr(node, "ashkv_shadow_handle"):
-                del node.ashkv_shadow_handle
-            return
-
-        # 2. Allocate fresh physical slots from SGLang's memory pool
-        num_tokens = getattr(node, "ashkv_compressed_length", getattr(node, "length", 0))
-        if num_tokens == 0:
-             val = node.__dict__.get("_value", None)
-             if val is not None:
-                 num_tokens = len(val)
-             
-        # Request slots from SGLang
-        new_indices = memory_pool.allocate(num_tokens)
-        
-        if isinstance(sglang_kv_cache, (list, tuple)):
-            hidden_dim = sglang_kv_cache[0].shape[-1]
-        else:
-            hidden_dim = sglang_kv_cache.shape[-1]
             
-        # 3. Decode INT8 -> BF16 for all layers
-        scale_bytes_per_layer = num_tokens * 2
-        int8_vals_per_layer = num_tokens * hidden_dim
-        layer_stride = scale_bytes_per_layer + int8_vals_per_layer
+        num_tokens = len(device_indices)
+        if num_tokens == 0:
+            return
+            
+        encode_kernel, _ = _get_kernels()
+        grid = (num_tokens,)
         
+        head_num = device_pool.head_num
+        head_dim = device_pool.head_dim
+        layer_num = device_pool.layer_num
+        
+        if self.compressible_layers is None:
+            self.compressible_layers = list(range(layer_num))
+            
+        scale_bytes = head_num * 2
+        int8_bytes = head_num * head_dim
+        total_bytes = scale_bytes + int8_bytes
+        slot_bytes = head_num * head_dim * 2 # Standard BF16 slot size
+        
+        device = device_pool.k_buffer[0].device
+        
+        # Temporary GPU tensors
+        int8_gpu = torch.empty((num_tokens, head_num, head_dim), dtype=torch.int8, device=device)
+        scales_gpu = torch.empty((num_tokens, head_num), dtype=torch.float16, device=device)
+            
+        for layer_idx in self.compressible_layers:
+            # 1. Get GPU BF16 tensor (K and V)
+            k_gpu = device_pool.k_buffer[layer_idx][device_indices]
+            v_gpu = device_pool.v_buffer[layer_idx][device_indices]
+            
+            # 2. Compress K
+            encode_kernel[grid](
+                k_gpu.view(num_tokens, -1),
+                int8_gpu.view(num_tokens, -1),
+                scales_gpu.view(num_tokens, -1),
+                num_tokens,
+                head_num * head_dim
+            )
+            
+            # Pack K to CPU
+            k_packed = torch.zeros((num_tokens, slot_bytes), dtype=torch.uint8, device="cpu", pin_memory=torch.cuda.is_available())
+            k_packed[:, :scale_bytes] = scales_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+            k_packed[:, scale_bytes:total_bytes] = int8_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+            k_padded_bf16 = k_packed.view(torch.bfloat16).view(num_tokens, head_num, head_dim)
+            
+            # Write K to CPU pool
+            host_pool.k_buffer[host_indices, layer_idx] = k_padded_bf16
+            
+            # 3. Compress V
+            encode_kernel[grid](
+                v_gpu.view(num_tokens, -1),
+                int8_gpu.view(num_tokens, -1),
+                scales_gpu.view(num_tokens, -1),
+                num_tokens,
+                head_num * head_dim
+            )
+            
+            # Pack V to CPU
+            v_packed = torch.zeros((num_tokens, slot_bytes), dtype=torch.uint8, device="cpu", pin_memory=torch.cuda.is_available())
+            v_packed[:, :scale_bytes] = scales_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+            v_packed[:, scale_bytes:total_bytes] = int8_gpu.view(torch.uint8).view(num_tokens, -1).cpu()
+            v_padded_bf16 = v_packed.view(torch.bfloat16).view(num_tokens, head_num, head_dim)
+            
+            # Write V to CPU pool
+            host_pool.v_buffer[host_indices, layer_idx] = v_padded_bf16
+
+    def promote_hook(
+        self, 
+        device_pool: Any, 
+        host_pool: Any, 
+        host_indices: torch.Tensor, 
+        device_indices: torch.Tensor, 
+        layer_id: int, 
+        pool_type: str
+    ) -> None:
+        """CPU -> GPU Interceptor (Decompression)
+        
+        Called by SGLang when a prefix matches an offloaded node.
+        We read the INT8+scales from the CPU host_pool and decode directly into the GPU device_pool.
+        Note: SGLang loads layer-by-layer, so this is called per-layer.
+        """
+        if pool_type != "MHA":
+            return
+            
+        num_tokens = len(device_indices)
+        if num_tokens == 0:
+            return
+            
         _, decode_kernel = _get_kernels()
         grid = (num_tokens,)
         
-        offset = 0
-        for layer_idx in self.compressible_layers:
-            scale_factors = shadow_tensor[offset : offset + scale_bytes_per_layer].view(torch.bfloat16)
-            int8_vals = shadow_tensor[offset + scale_bytes_per_layer : offset + layer_stride].view(torch.int8).view(num_tokens, hidden_dim)
-            
-            bf16_vals = torch.empty((num_tokens, hidden_dim), dtype=torch.bfloat16, device="cuda")
-            
-            decode_kernel[grid](
-                int8_vals,
-                scale_factors,
-                bf16_vals,
-                num_tokens,
-                hidden_dim,
-            )
-            
-            # Write back to SGLang's fresh slots
-            _set_layer_tensor(sglang_kv_cache, layer_idx, new_indices, bf16_vals)
-            
-            offset += layer_stride
+        head_num = device_pool.head_num
+        head_dim = device_pool.head_dim
         
-        # 4. Update Node state
-        node.kv_indices = new_indices
-        node.value = new_indices
-        node.is_compressed = False
-        if hasattr(node, "ashkv_shadow_handle"):
-            del node.ashkv_shadow_handle
+        scale_bytes = head_num * 2
         
-        # 5. Free shadow memory
-        self.allocator.free(handle)
-
-    def demote_hook(self, node: Any, sglang_kv_cache: Any, memory_pool: Any) -> bool:
-        """Post-decode: Compress a RadixNode to INT8 instead of deleting it.
+        # 1. Read K from CPU pool
+        host_k_bf16 = host_pool.k_buffer[host_indices, layer_id].contiguous()
+        host_k_bytes = host_k_bf16.view(num_tokens, -1).contiguous().view(torch.uint8).view(num_tokens, -1)
+        k_scales_cpu = host_k_bytes[:, :scale_bytes].contiguous().view(torch.float16)
+        k_int8_cpu = host_k_bytes[:, scale_bytes : scale_bytes + head_num * head_dim].contiguous().view(torch.int8)
         
-        Args:
-            node: SGLang RadixNode instance about to be evicted.
-            sglang_kv_cache: SGLang's underlying bfloat16 KV cache tensor(s).
-            memory_pool: SGLang's TokenToKVPool for returning slots.
-            
-        Returns:
-            bool: True if successfully compressed and intercepted eviction, False otherwise.
-        """
-        if hasattr(node, "is_compressed") and node.is_compressed:
-            return True
-            
-        physical_indices = getattr(node, "kv_indices", node.__dict__.get("_value", None))
-        if physical_indices is None:
-            return False
-            
-        num_tokens = getattr(node, "length", 0)
-        if num_tokens == 0 and physical_indices is not None:
-            num_tokens = len(physical_indices)    
-            
-        if not self.circuit_breaker.is_codec_available(self.codec_name):
-            print(f"[HOOKS] Circuit breaker unavailable for {self.codec_name}")
-            return False # Circuit breaker tripped, fall back to native eviction
-            
-        kv_indices = physical_indices
+        # 2. Read V from CPU pool
+        host_v_bf16 = host_pool.v_buffer[host_indices, layer_id].contiguous()
+        host_v_bytes = host_v_bf16.view(num_tokens, -1).contiguous().view(torch.uint8).view(num_tokens, -1)
+        v_scales_cpu = host_v_bytes[:, :scale_bytes].contiguous().view(torch.float16)
+        v_int8_cpu = host_v_bytes[:, scale_bytes : scale_bytes + head_num * head_dim].contiguous().view(torch.int8)
         
-        if isinstance(sglang_kv_cache, (list, tuple)):
-            hidden_dim = sglang_kv_cache[0].shape[-1]
-        else:
-            hidden_dim = sglang_kv_cache.shape[-1]
+        device = device_pool.k_buffer[0].device
         
-        scale_bytes_per_layer = num_tokens * 2
-        int8_vals_per_layer = num_tokens * hidden_dim
-        layer_stride = scale_bytes_per_layer + int8_vals_per_layer
-        total_bytes = layer_stride * len(self.compressible_layers)
+        # 3. Move to GPU
+        k_scales_gpu = k_scales_cpu.to(device, non_blocking=True)
+        k_int8_gpu = k_int8_cpu.to(device, non_blocking=True)
+        v_scales_gpu = v_scales_cpu.to(device, non_blocking=True)
+        v_int8_gpu = v_int8_cpu.to(device, non_blocking=True)
         
-        handle = self.allocator.alloc(Tier.FP8, total_bytes)
-        if handle < 0:
-            return False # Shadow cache OOM, let SGLang evict natively
-            
-        try:
-            shadow_tensor = self.allocator.get_tensor(handle)
-            encode_kernel, decode_kernel = _get_kernels()
-            grid = (num_tokens,)
-            
-            offset = 0
-            for layer_idx in self.compressible_layers:
-                arr_gpu = _get_layer_tensor(sglang_kv_cache, layer_idx, kv_indices)
-                
-                scale_factors = torch.empty((num_tokens,), dtype=torch.bfloat16, device="cuda")
-                int8_vals = torch.empty((num_tokens, hidden_dim), dtype=torch.int8, device="cuda")
-                
-                encode_kernel[grid](
-                    arr_gpu,
-                    int8_vals,
-                    scale_factors,
-                    num_tokens,
-                    hidden_dim,
-                )
-                
-                # Checksum verification round-trip (GPU)
-                bf16_verify = torch.empty((num_tokens, hidden_dim), dtype=torch.bfloat16, device="cuda")
-                decode_kernel[grid](
-                    int8_vals,
-                    scale_factors,
-                    bf16_verify,
-                    num_tokens,
-                    hidden_dim,
-                )
-                
-                if not torch.allclose(arr_gpu, bf16_verify, atol=5e-2):
-                    print(f"[HOOKS] allclose failed! arr_gpu: {arr_gpu.sum()}, bf16_verify: {bf16_verify.sum()}")
-                    self.circuit_breaker.record_codec_failure(self.codec_name)
-                    self.allocator.free(handle)
-                    return False
-                    
-                self.circuit_breaker.record_codec_success(self.codec_name)
-                
-                # Store in Shadow Allocator
-                shadow_tensor[offset : offset + scale_bytes_per_layer].copy_(scale_factors.view(torch.uint8).flatten())
-                shadow_tensor[offset + scale_bytes_per_layer : offset + layer_stride].copy_(int8_vals.view(torch.uint8).flatten())
-                
-                offset += layer_stride
-            
-            # Update Node State
-            node.is_compressed = True
-            node.ashkv_shadow_handle = handle
-            node.ashkv_compressed_length = num_tokens
-            node.kv_indices = None # Drop physical reference
-            node.value = None
-            
-            # Free the physical slots back to SGLang
-            memory_pool.free(kv_indices)
-            
-            return True
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"[HOOKS] Exception occurred: {e}")
-            try:
-                print(f"[HOOKS Debug] num_tokens: {num_tokens}, len(kv_indices): {len(kv_indices) if kv_indices is not None else 'None'}")
-                print(f"[HOOKS Debug] arr_gpu shape: {arr_gpu.shape if 'arr_gpu' in locals() else 'N/A'}")
-                print(f"[HOOKS Debug] bf16_verify shape: {bf16_verify.shape if 'bf16_verify' in locals() else 'N/A'}")
-                print(f"[HOOKS Debug] node dict: {vars(node) if hasattr(node, '__dict__') else dir(node)}")
-            except:
-                pass
-            self.allocator.free(handle)
-            return False
+        # 4. Decode directly into device_pool slots
+        k_gpu = torch.empty((num_tokens, head_num, head_dim), dtype=torch.bfloat16, device=device)
+        decode_kernel[grid](
+            k_int8_gpu.view(num_tokens, -1),
+            k_scales_gpu.view(num_tokens, -1),
+            k_gpu.view(num_tokens, -1),
+            num_tokens,
+            head_num * head_dim
+        )
+        device_pool.k_buffer[layer_id][device_indices] = k_gpu
+        
+        v_gpu = torch.empty((num_tokens, head_num, head_dim), dtype=torch.bfloat16, device=device)
+        decode_kernel[grid](
+            v_int8_gpu.view(num_tokens, -1),
+            v_scales_gpu.view(num_tokens, -1),
+            v_gpu.view(num_tokens, -1),
+            num_tokens,
+            head_num * head_dim
+        )
+        device_pool.v_buffer[layer_id][device_indices] = v_gpu

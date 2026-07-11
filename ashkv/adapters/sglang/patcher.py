@@ -1,7 +1,8 @@
-"""SGLang RadixCache Patcher.
+"""SGLang HiCache Patcher.
 
-Uses explicit direct imports (Path 2) to hook into SGLang >= 0.3.0.
-Fails explicitly and safely if the SGLang internal architecture changes.
+Uses explicit direct imports to hook into SGLang >= 0.5.x HiCache memory pools.
+Intercepts the backup_from_device_all_layer and load_to_device_per_layer methods
+to perform INT8 compression/decompression during CPU offload.
 """
 import logging
 import threading
@@ -10,161 +11,92 @@ logger = logging.getLogger(__name__)
 
 # Global integration state
 _HOOKS = None
-_SGLANG_KV_CACHE = None
-_MEMORY_POOL = None
 _PATCH_LOCK = threading.Lock()
 
 
-def apply_radix_cache_patches(hooks=None, sglang_kv_cache=None, memory_pool=None) -> None:
-    """Monkey-patch SGLang's RadixCache and TreeNode classes.
+def apply_hicache_patches(hooks=None) -> None:
+    """Monkey-patch SGLang's HostKVCache classes for HiCache IO interception.
     
     Args:
-        hooks: SGLangHooks instance. If None, late-binding must be used.
-        sglang_kv_cache: PyTorch BF16 tensor. If None, auto-discovered on first eviction.
-        memory_pool: TokenToKVPool allocator. If None, auto-discovered on first eviction.
+        hooks: SGLangHooks instance containing demote_hook and promote_hook.
     """
-    global _HOOKS, _SGLANG_KV_CACHE, _MEMORY_POOL
+    global _HOOKS
     _HOOKS = hooks
-    _SGLANG_KV_CACHE = sglang_kv_cache
-    _MEMORY_POOL = memory_pool
+
+    if _HOOKS is None:
+        logger.warning("apply_hicache_patches called without hooks; interception will be disabled.")
+        return
 
     try:
-        # SGLang >= 0.5.x moved RadixCache to mem_cache
-        from sglang.srt.mem_cache.radix_cache import RadixCache, TreeNode
-    except ImportError:
-        try:
-            # SGLang < 0.5.x used managers
-            from sglang.srt.managers.radix_cache import RadixCache, TreeNode
-        except ImportError as e:
-            logger.error("Failed to import SGLang RadixCache. ASH-KV requires SGLang >= 0.3.0.")
-            raise RuntimeError(f"Incompatible SGLang version or missing dependency: {e}")
+        from sglang.srt.mem_cache.memory_pool_host import (
+            MHATokenToKVPoolHost,
+            MLATokenToKVPoolHost,
+        )
+    except ImportError as e:
+        logger.error("Failed to import SGLang HostKVCache. ASH-KV requires SGLang >= 0.5.x for HiCache.")
+        raise RuntimeError(f"Incompatible SGLang version or missing dependency: {e}")
 
-    # We do NOT patch match_prefix directly anymore.
-    # SGLang v0.5.14 crashes if it encounters node.value = None during traversal.
-    # Instead of brittle manual traversals, we use JIT Property Auto-Promotion.
-    
-    if not getattr(TreeNode, "ashkv_patched", False):
-        # 1. Patch TreeNode.value to auto-promote on read
-        def get_value(self):
-            if getattr(self, "ashkv_shadow_handle", None) is not None:
-                if not getattr(self, "ashkv_bypass_promote", False):
-                    if _HOOKS is not None:
-                        _HOOKS.promote_hook(self, _SGLANG_KV_CACHE, _MEMORY_POOL)
-            return self.__dict__.get("_value", None)
-            
-        def set_value(self, val):
-            self.__dict__["_value"] = val
-            
-        TreeNode.value = property(get_value, set_value)
-        
-        # 2. Patch TreeNode.evicted so it doesn't trigger auto-promotion during status checks
-        def get_evicted(self):
-            return self.__dict__.get("_value", None) is None and getattr(self, "ashkv_shadow_handle", None) is None
-            
-        TreeNode.evicted = property(get_evicted)
-        TreeNode.ashkv_patched = True
+    with _PATCH_LOCK:
+        if getattr(MHATokenToKVPoolHost, "ashkv_patched", False):
+            return
 
-    original_evict = RadixCache.evict
+        # 1. Patch MHATokenToKVPoolHost
+        original_mha_backup = MHATokenToKVPoolHost.backup_from_device_all_layer
+        original_mha_load = MHATokenToKVPoolHost.load_to_device_per_layer
 
-    def ashkv_evict(self, *args, **kwargs):
-        """Intercept eviction to trigger demote_hook.
-        
-        Instead of freeing physical slots to the void, we compress the node
-        to INT8, explicitly free the slots to the TokenToKVPool, and keep the
-        node alive but marked as `compressed`.
-        """
-        with _PATCH_LOCK:
-            freed_tokens = 0
-            
-            num_tokens = kwargs.get("num_tokens", 0)
-            is_v05x = False
-            if len(args) > 0:
-                if hasattr(args[0], "num_tokens"):
-                    num_tokens = args[0].num_tokens
-                    is_v05x = True
-                elif isinstance(args[0], int):
-                    num_tokens = args[0]
-                    
-            evict_callback = kwargs.get("evict_callback", None)
-            if len(args) > 1 and callable(args[1]):
-                evict_callback = args[1]
-                
-            global _MEMORY_POOL, _SGLANG_KV_CACHE
-            if _MEMORY_POOL is None and hasattr(self, "token_to_kv_pool_allocator"):
-                _MEMORY_POOL = self.token_to_kv_pool_allocator
-            if _SGLANG_KV_CACHE is None and _MEMORY_POOL is not None and hasattr(_MEMORY_POOL, "get_kvcache"):
-                _SGLANG_KV_CACHE = _MEMORY_POOL.get_kvcache()
-            
-            # Replicate SGLang's LRU eviction loop but inject compression
-            while freed_tokens < num_tokens and self.evictable_size_ > 0:
-                # SGLang maintains an lru_queue, evictable_queue, or evictable_leaves
-                queue = getattr(self, "lru_queue", getattr(self, "evictable_queue", getattr(self, "evictable_leaves", None)))
-                if queue is None or len(queue) == 0:
-                    break
-                    
-                # Get the least recently used node
-                if isinstance(queue, set):
-                    if hasattr(self, "eviction_strategy"):
-                        import heapq
-                        leaves = list(queue)
-                        eviction_heap = [(self.eviction_strategy.get_priority(n), n) for n in leaves]
-                        heapq.heapify(eviction_heap)
-                        _, node = heapq.heappop(eviction_heap)
-                    else:
-                        node = next(iter(queue))
-                elif isinstance(queue, dict):
-                    node = next(iter(queue.values()))
-                else:
-                    node = queue[0]
-                
-                # Calculate tokens before compressing (since compression clears node.value)
-                node_tokens = getattr(node, "length", 0)
-                if node_tokens == 0:
-                     val = node.__dict__.get("_value", None)
-                     if val is not None:
-                         node_tokens = len(val)
-                     
-                # Attempt to compress it
-                success = _HOOKS.demote_hook(node, _SGLANG_KV_CACHE, _MEMORY_POOL)
-                     
-                if success:
-                    # Node is compressed and physical slots freed internally by demote_hook.
-                    # We remove it from the evictable queue since it's no longer occupying BF16.
-                    freed_tokens += node_tokens
-                    if isinstance(queue, set):
-                        queue.remove(node)
-                        if hasattr(self, "_update_leaf_status"):
-                            self._update_leaf_status(node.parent)
-                    elif isinstance(queue, dict):
-                        del queue[id(node)]
-                    else:
-                        queue.pop(0)
-                        
-                    self.evictable_size_ -= node_tokens
-                else:
-                    # Shadow cache is full (or failed), fallback to actual native eviction
-                    kv_indices = getattr(node, "kv_indices", node.__dict__.get("_value", None))
-                    if kv_indices is not None:
-                        if evict_callback:
-                            evict_callback(kv_indices)
-                        elif getattr(self, "token_to_kv_pool_allocator", None):
-                            self.token_to_kv_pool_allocator.free(kv_indices)
-                        freed_tokens += node_tokens
-                    
-                    if hasattr(self, "_delete_leaf"):
-                        self._delete_leaf(node)
-                    else:
-                        self._remove_node(node)
-                    
-            if is_v05x:
-                try:
-                    from sglang.srt.mem_cache.base_prefix_cache import EvictResult
-                    return EvictResult(num_tokens_evicted=freed_tokens)
-                except ImportError:
-                    pass
-            return freed_tokens
+        def mha_backup_from_device_all_layer(self, device_pool, host_indices, device_indices, io_backend):
+            # Intercept GPU -> CPU offload
+            # Demote hook will compress `device_indices` from `device_pool` into `host_indices` in `self`
+            _HOOKS.demote_hook(
+                device_pool=device_pool,
+                host_pool=self,
+                host_indices=host_indices,
+                device_indices=device_indices,
+                pool_type="MHA"
+            )
 
-    # Patch the RadixCache methods
-    RadixCache.evict = ashkv_evict
-    
-    logger.info("ASH-KV successfully patched SGLang RadixCache.")
+        def mha_load_to_device_per_layer(self, device_pool, host_indices, device_indices, layer_id, io_backend):
+            # Intercept CPU -> GPU restore
+            # Promote hook will decompress `host_indices` from `self` into `device_indices` in `device_pool` for `layer_id`
+            _HOOKS.promote_hook(
+                device_pool=device_pool,
+                host_pool=self,
+                host_indices=host_indices,
+                device_indices=device_indices,
+                layer_id=layer_id,
+                pool_type="MHA"
+            )
+
+        MHATokenToKVPoolHost.backup_from_device_all_layer = mha_backup_from_device_all_layer
+        MHATokenToKVPoolHost.load_to_device_per_layer = mha_load_to_device_per_layer
+        MHATokenToKVPoolHost.ashkv_patched = True
+
+
+        # 2. Patch MLATokenToKVPoolHost (if applicable, using same pattern)
+        original_mla_backup = MLATokenToKVPoolHost.backup_from_device_all_layer
+        original_mla_load = MLATokenToKVPoolHost.load_to_device_per_layer
+
+        def mla_backup_from_device_all_layer(self, device_pool, host_indices, device_indices, io_backend):
+            _HOOKS.demote_hook(
+                device_pool=device_pool,
+                host_pool=self,
+                host_indices=host_indices,
+                device_indices=device_indices,
+                pool_type="MLA"
+            )
+
+        def mla_load_to_device_per_layer(self, device_pool, host_indices, device_indices, layer_id, io_backend):
+            _HOOKS.promote_hook(
+                device_pool=device_pool,
+                host_pool=self,
+                host_indices=host_indices,
+                device_indices=device_indices,
+                layer_id=layer_id,
+                pool_type="MLA"
+            )
+
+        MLATokenToKVPoolHost.backup_from_device_all_layer = mla_backup_from_device_all_layer
+        MLATokenToKVPoolHost.load_to_device_per_layer = mla_load_to_device_per_layer
+        MLATokenToKVPoolHost.ashkv_patched = True
+
+    logger.info("ASH-KV successfully patched SGLang HiCache (HostKVCache).")
