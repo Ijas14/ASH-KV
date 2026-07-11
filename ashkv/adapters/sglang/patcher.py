@@ -15,13 +15,13 @@ _MEMORY_POOL = None
 _PATCH_LOCK = threading.Lock()
 
 
-def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
+def apply_radix_cache_patches(hooks=None, sglang_kv_cache=None, memory_pool=None) -> None:
     """Monkey-patch SGLang's RadixCache and TreeNode classes.
     
     Args:
-        hooks: SGLangHooks instance
-        sglang_kv_cache: PyTorch BF16 tensor representing the memory pool
-        memory_pool: TokenToKVPool allocator from SGLang
+        hooks: SGLangHooks instance. If None, late-binding must be used.
+        sglang_kv_cache: PyTorch BF16 tensor. If None, auto-discovered on first eviction.
+        memory_pool: TokenToKVPool allocator. If None, auto-discovered on first eviction.
     """
     global _HOOKS, _SGLANG_KV_CACHE, _MEMORY_POOL
     _HOOKS = hooks
@@ -88,6 +88,12 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
             evict_callback = kwargs.get("evict_callback", None)
             if len(args) > 1 and callable(args[1]):
                 evict_callback = args[1]
+                
+            global _MEMORY_POOL, _SGLANG_KV_CACHE
+            if _MEMORY_POOL is None and hasattr(self, "token_to_kv_pool_allocator"):
+                _MEMORY_POOL = self.token_to_kv_pool_allocator
+            if _SGLANG_KV_CACHE is None and _MEMORY_POOL is not None and hasattr(_MEMORY_POOL, "get_kvcache"):
+                _SGLANG_KV_CACHE = _MEMORY_POOL.get_kvcache()
             
             # Replicate SGLang's LRU eviction loop but inject compression
             while freed_tokens < num_tokens and self.evictable_size_ > 0:
