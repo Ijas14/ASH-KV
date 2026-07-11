@@ -1,4 +1,4 @@
-# ASH-KV
+# ASH-KV (Adaptive Saliency Hybrid KV management)
 
 Stop deleting memory; change its state. ASH-KV is an adaptive, tiered KV cache management system for LLM inference. It prevents concurrency-driven OOMs by compressing old context into cheaper numeric formats (FP8, INT8, INT4) and offloading to CPU, rather than evicting it.
 
