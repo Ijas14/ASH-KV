@@ -19,6 +19,7 @@ class MockTokenToKVPool:
         self.capacity = capacity
         self.allocated_tokens = 0
         self.next_idx = 0
+        self.device = "cuda"
         
     def allocate(self, num_tokens):
         if self.allocated_tokens + num_tokens > self.capacity:
