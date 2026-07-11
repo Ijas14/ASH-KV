@@ -10,10 +10,10 @@ def inject_heavy_tail_outliers(tensor: torch.Tensor, outlier_ratio: float = 0.01
     num_outliers = int(num_elements * outlier_ratio)
     
     # Generate random indices
-    indices = torch.randperm(num_elements)[:num_outliers]
+    indices = torch.randperm(num_elements, device=tensor.device)[:num_outliers]
     
     # Randomly make them positive or negative spikes
-    signs = torch.randint(0, 2, (num_outliers,)).float() * 2 - 1
+    signs = torch.randint(0, 2, (num_outliers,), device=tensor.device).float() * 2 - 1
     
     flat_tensor = tensor.view(-1)
     # Multiply the existing variance by the magnitude
