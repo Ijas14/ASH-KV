@@ -45,39 +45,64 @@ def apply_radix_cache_patches(hooks, sglang_kv_cache, memory_pool) -> None:
     def ashkv_match_prefix(self, *args, **kwargs):
         """Intercept prefix matching to trigger promote_hook.
         
-        When a request matches a prefix, if that prefix node is compressed
-        in the shadow cache, it must be decompressed into fresh physical slots
-        before the request can proceed.
+        SGLang v0.5.14 crashes natively if it encounters a node with `value=None`
+        during traversal (torch.cat throws TypeError). Thus, we must perform a
+        pre-emptive traversal to promote any compressed nodes in the matched path
+        before handing execution back to the original function.
         """
         with _PATCH_LOCK:
-            # Find the nodes that match the prefix
-            nodes_to_promote = []
-            
-            # Since SGLang's match_prefix is recursive/iterative, we let it run
-            # to find the matching node path. SGLang returns the matching nodes 
-            # or the matched length. This is highly dependent on SGLang internals.
-            # In SGLang >= 0.3.0, it returns (matched_node, matched_length, ...).
-            # In SGLang v0.5.x, it returns a MatchResult object.
-            result = original_match_prefix(self, *args, **kwargs)
-            
-            matched_node = None
-            if hasattr(result, "last_device_node"):
-                matched_node = result.last_device_node
-            elif isinstance(result, tuple) and len(result) > 0:
-                matched_node = result[0]
+            # 1. Extract the key
+            key = kwargs.get("key", None)
+            if key is None and len(args) > 0:
+                key = args[0]
                 
-            if matched_node is not None:
-                # Traverse up the tree to ensure all parent nodes are promoted
-                curr = matched_node
-                while curr is not None:
-                    if getattr(curr, "ashkv_shadow_handle", None) is not None:
-                        nodes_to_promote.append(curr)
-                    curr = curr.parent
-                    
-                # Promote from root to leaf
-                for node in reversed(nodes_to_promote):
-                    _HOOKS.promote_hook(node, _SGLANG_KV_CACHE, _MEMORY_POOL)
+            # Unwrap MatchPrefixParams if present (v0.5.x)
+            if hasattr(key, "key"):
+                key = key.key
 
+            # 2. Pre-emptively traverse and promote
+            if hasattr(self, "root_node") and key is not None:
+                try:
+                    curr_key = key
+                    page_size = getattr(self, "page_size", 1)
+                    
+                    # Mimic SGLang's exact key preparation
+                    if hasattr(curr_key, "maybe_to_bigram_view"):
+                        is_eagle = getattr(self, "is_eagle", False)
+                        curr_key, _ = curr_key.maybe_to_bigram_view(is_eagle)
+                        
+                    if hasattr(curr_key, "page_aligned"):
+                        curr_key = curr_key.page_aligned(page_size)
+                        
+                    curr_node = self.root_node
+                    
+                    while len(curr_key) > 0:
+                        child_key = curr_key.child_key(page_size) if hasattr(curr_key, "child_key") else curr_key[0]
+                        if child_key not in curr_node.children:
+                            break
+                            
+                        child = curr_node.children[child_key]
+                        
+                        # --- ASH-KV HOOK (Promote) ---
+                        if getattr(child, "ashkv_shadow_handle", None) is not None:
+                            _HOOKS.promote_hook(child, _SGLANG_KV_CACHE, _MEMORY_POOL)
+                            
+                        # Advance traversal
+                        if hasattr(child.key, "match"):
+                            prefix_len = child.key.match(curr_key, page_size=page_size)
+                        else:
+                            break # Fallback if we can't match accurately
+                            
+                        if prefix_len < len(child.key):
+                            break
+                        curr_node = child
+                        curr_key = curr_key[prefix_len:]
+                except Exception as e:
+                    # If our traversal fails, let SGLang try it (it might crash, but we don't break early)
+                    pass
+
+            # 3. Call original now that all nodes in path have physical values restored
+            result = original_match_prefix(self, *args, **kwargs)
             return result
 
     def ashkv_evict(self, *args, **kwargs):
