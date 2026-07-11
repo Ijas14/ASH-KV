@@ -127,21 +127,9 @@ class E2ESimulator:
         v_b = device_pool.v_buffer[0, :self.seq_len].unsqueeze(0).transpose(1, 2)
         
         attn_output = F.scaled_dot_product_attention(q_b, k_b, v_b, is_causal=True)
-        return attn_output.transpose(1, 2).reshape(self.seq_len, self.embed_dim), saved_bytes
-
-    def validate(self):
-        hidden_states = torch.randn(self.seq_len, self.embed_dim, dtype=torch.bfloat16, device="cuda")
         
-        base_out, _, base_k, base_v = self.run_baseline(hidden_states)
-        ashkv_out, bytes_saved = self.run_ashkv(hidden_states, base_k, base_v)
-        
-        cos_sim = F.cosine_similarity(base_out.float().view(-1), ashkv_out.float().view(-1), dim=0).item()
-        max_ae = torch.max(torch.abs(base_out.float() - ashkv_out.float())).item()
-        
-        return {
-            "cosine_similarity": cos_sim,
-            "max_absolute_error": max_ae,
-            "bytes_saved": bytes_saved,
+        telemetry = {
+            "bytes_saved": saved_bytes,
             "demote_time_ms": demote_time if 'demote_time' in locals() else 0.0,
             "promote_time_ms": promote_time if 'promote_time' in locals() else 0.0,
             "saliency_mean": saliency_mean if 'saliency_mean' in locals() else 0.0,
@@ -150,6 +138,24 @@ class E2ESimulator:
             "bf16_bytes": bf16_bytes if 'bf16_bytes' in locals() else 0,
             "int8_bytes": int8_bytes if 'int8_bytes' in locals() else 0
         }
+        
+        return attn_output.transpose(1, 2).reshape(self.seq_len, self.embed_dim), telemetry
+
+    def validate(self):
+        hidden_states = torch.randn(self.seq_len, self.embed_dim, dtype=torch.bfloat16, device="cuda")
+        
+        base_out, _, base_k, base_v = self.run_baseline(hidden_states)
+        ashkv_out, telemetry = self.run_ashkv(hidden_states, base_k, base_v)
+        
+        cos_sim = F.cosine_similarity(base_out.float().view(-1), ashkv_out.float().view(-1), dim=0).item()
+        max_ae = torch.max(torch.abs(base_out.float() - ashkv_out.float())).item()
+        
+        res = {
+            "cosine_similarity": cos_sim,
+            "max_absolute_error": max_ae,
+        }
+        res.update(telemetry)
+        return res
 
 if __name__ == "__main__":
     print("[ASH-KV] Booting E2E Validation Simulator...")
