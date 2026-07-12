@@ -79,7 +79,7 @@ ASH-KV is currently integrated with **SGLang** - Validating natively on **AMD MI
 
 - **Codecs:** BF16 (identity), INT8 (Triton kernel). The generalized N-bit dithered codec exhibits the expected monotonic tradeoff between compression ratio and reconstruction fidelity across the evaluated precisions (INT2, INT4, INT8).
 - **Telemetry:** Vectorized `PageTable` indexing utilizing O(1) NumPy array lookups (no Python loops in the hot path).
-- **Integration:** SGLang `RadixCache` proxy patch. Atomic `promote_hook` and `demote_hook` intercept preemptions at the node level to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
+- **Integration:** SGLang `HiCache` memory pool patch. Atomic `promote_hook` and `demote_hook` intercept preemptions at the CPU offload layer (`backup_from_device_all_layer` and `load_to_device_per_layer`) to seamlessly encode/decode KV blocks directly via GPU tensors before they hit host memory.
 
 ---
 
