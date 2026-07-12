@@ -140,7 +140,7 @@ ashkv/
 ├── safety/             # Circuit breakers, pressure guard, BF16 fallback
 ├── sglang_integration/   # Shadow allocator, hooks, block manager patch
 ├── docs/decisions/     # Architectural Decision Records (ADRs)
-└── tests/              # 144 tests (contracts, fault injection, dependency direction)
+└── tests/              # 150+ tests (contracts, fault injection, dependency direction)
 ```
 
 ### Dependency Discipline
@@ -166,10 +166,10 @@ ASH-KV is currently transitioning from a mathematically proven prototype to a pr
 
 | Command | Description |
 |---------|-------------|
-| `pytest tests/` | Run the full unit test suite (codecs, telemetry, safety guards) |
-| `pytest tests/test_codecs_and_telemetry.py -v` | Run specifically the Triton codec roundtrip tests |
-| `python tests/simulator.py` | Run the mathematical E2E validator proving ASH-KV state machine logic |
-| `python tests/stress_test_nbit.py` | Run the Adversarial N-Bit Validation proving 3-Sigma Outlier Isolation against 50x spikes |
+| `pytest ashkv/tests/` | Run the full unit test suite (codecs, telemetry, safety guards) |
+| `pytest ashkv/tests/test_codecs_and_telemetry.py -v` | Run specifically the Triton codec roundtrip tests |
+| `python ashkv/tests/simulator.py` | Run the mathematical E2E validator proving ASH-KV state machine logic |
+| `python ashkv/tests/stress_test_nbit.py` | Run the Adversarial N-Bit Validation proving 3-Sigma Outlier Isolation against 50x spikes |
 
 ---
 
