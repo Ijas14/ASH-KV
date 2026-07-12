@@ -19,6 +19,7 @@ from .fp8 import FP8Codec
 from .int4 import INT4Codec
 from .int8 import INT8Codec
 from .int2_dithered import DitheredINT2Codec
+from .nbit_dithered import DitheredNBitCodec
 from .mock import (
     MockCorruptCodec,
     MockFailingCodec,
@@ -33,6 +34,7 @@ codec_registry.register("bf16", BF16Codec())
 codec_registry.register("int8_default", INT8Codec())
 codec_registry.register("int4_default", INT4Codec())
 codec_registry.register("int2_dithered", DitheredINT2Codec())
+codec_registry.register("nbit_dithered", DitheredNBitCodec())
 codec_registry.register("fp8_default", FP8Codec())
 
 # Register mock codecs for testing
@@ -48,6 +50,7 @@ __all__ = [
     "INT8Codec",
     "INT4Codec",
     "DitheredINT2Codec",
+    "DitheredNBitCodec",
     "checksum",
     "MockFP8Codec",
     "MockINT8Codec",
