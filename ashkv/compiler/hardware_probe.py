@@ -91,11 +91,28 @@ def probe_hardware(device_id: int = 0) -> HardwareProfile:
         if not has_fp8 and has_int8:
             logger.info("  → will use INT8 for compressed tier (no native FP8)")
 
+        if has_int8:
+            _warmup_triton()
+
         return profile
 
     except Exception as e:
         logger.warning(f"hardware probe failed: {e} — returning CPU-only profile")
         return _cpu_profile()
+
+
+def _warmup_triton() -> None:
+    """Warm up Triton compiler for common head dimensions to prevent JIT latency spikes."""
+    try:
+        from ashkv.codecs.int8 import INT8Codec
+        for hidden_dim in [64, 128]:
+            codec = INT8Codec(hidden_dim=hidden_dim)
+            dummy_bf16 = (b'\x00' * 2) * hidden_dim
+            compressed = codec.encode(dummy_bf16)
+            codec.decode(compressed)
+        logger.info("Triton JIT warmup complete (AOT emulation).")
+    except Exception as e:
+        logger.warning(f"Triton warmup failed: {e}")
 
 
 def _cpu_profile() -> HardwareProfile:
