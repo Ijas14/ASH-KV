@@ -39,7 +39,7 @@ ASH-KV treats the KV cache as a **tiered memory system**. Recent, important toke
 ASH-KV is built on a strict **cold/hot boundary** to ensure the inference hot path remains blindingly fast.
 
 **Cold Path (Startup):**
-Parses the YAML config, probes the hardware, resolves codecs, and compiles closures. The hot path never reads config or checks flags.
+Parses the YAML config, probes the hardware, executes Triton kernel warmups (AOT emulation) to eliminate JIT latency spikes, resolves codecs, and compiles closures. The hot path never reads config or checks flags.
 
 **Hot Path (Every Decode Step):**
 1. `score()` — Vectorized numpy computation of page fidelity scores.
