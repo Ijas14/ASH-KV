@@ -138,7 +138,7 @@ ashkv/
 ├── compiler/           # Cold path: config -> closures, hardware probe
 ├── codecs/             # Triton kernels (INT8, FP8, INT4) + checksums
 ├── safety/             # Circuit breakers, pressure guard, BF16 fallback
-├── sglang_integration/   # Shadow allocator, hooks, block manager patch
+├── adapters/sglang/    # Shadow allocator, hooks, block manager patch
 ├── docs/decisions/     # Architectural Decision Records (ADRs)
 └── tests/              # 150+ tests (contracts, fault injection, dependency direction)
 ```
