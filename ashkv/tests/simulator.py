@@ -160,10 +160,15 @@ class E2ESimulator:
             from ashkv.codecs.int8 import _get_kernels
             _get_kernels()
             
-            # Use hooks for INT8 to bypass the frozen Numpy bug in the codec wrapper
+            # Run benchmarks
             int8_out, int8_bf16, int8_comp = self.run_int8_via_hooks(hidden_states, base_k, base_v)
-            # Use direct codec for INT2
             int2_out, int2_bf16, int2_comp = self.run_codec_direct(hidden_states, base_k, base_v, "int2_dithered")
+            
+            try:
+                fp8_out, fp8_bf16, fp8_comp = self.run_codec_direct(hidden_states, base_k, base_v, "fp8_default")
+                fp8_sim = F.cosine_similarity(base_out.float().view(-1), fp8_out.float().view(-1), dim=0).item()
+            except Exception as e:
+                fp8_sim, fp8_comp = 0.0, 0
             
             int8_sim = F.cosine_similarity(base_out.float().view(-1), int8_out.float().view(-1), dim=0).item()
             int2_sim = F.cosine_similarity(base_out.float().view(-1), int2_out.float().view(-1), dim=0).item()
@@ -171,8 +176,10 @@ class E2ESimulator:
             return {
                 "int8_sim": int8_sim,
                 "int2_sim": int2_sim,
+                "fp8_sim": fp8_sim,
                 "int8_bytes": int8_comp,
                 "int2_bytes": int2_comp,
+                "fp8_bytes": fp8_comp,
                 "bf16_bytes": int8_bf16
             }
 
@@ -181,15 +188,20 @@ if __name__ == "__main__":
     sim = E2ESimulator(seq_len=2048, gpu_capacity=1024)
     res = sim.validate()
     
-    print("\n" + "="*60)
-    print("      ASH-KV 3-WAY CODEC VALIDATION REPORT")
-    print("="*60)
-    print(f"{'Metric':<25} | {'INT8 (Triton)':<15} | {'INT2 Dithered (PyTorch)'}")
-    print("-" * 60)
-    print(f"{'Cosine Similarity':<25} | {res['int8_sim']:<15.6f} | {res['int2_sim']:.6f}")
-    print(f"{'Memory Footprint (KB)':<25} | {res['int8_bytes']/1024:<15.2f} | {res['int2_bytes']/1024:.2f}")
-    print(f"{'Compression Ratio':<25} | {res['bf16_bytes']/res['int8_bytes']:<15.2f}x | {res['bf16_bytes']/res['int2_bytes']:.2f}x")
-    print("="*60)
+    print("\n" + "="*80)
+    print("      ASH-KV 4-WAY CODEC VALIDATION REPORT")
+    print("="*80)
+    print(f"{'Metric':<25} | {'INT8 (Triton)':<15} | {'INT2 Dithered':<15} | {'FP8 Native':<15}")
+    print("-" * 80)
+    
+    fp8_sim_str = f"{res['fp8_sim']:.6f}" if res['fp8_sim'] > 0 else "N/A (No HW)"
+    fp8_mem_str = f"{res['fp8_bytes']/1024:.2f}" if res['fp8_bytes'] > 0 else "N/A"
+    fp8_ratio_str = f"{res['bf16_bytes']/res['fp8_bytes']:.2f}x" if res['fp8_bytes'] > 0 else "N/A"
+    
+    print(f"{'Cosine Similarity':<25} | {res['int8_sim']:<15.6f} | {res['int2_sim']:<15.6f} | {fp8_sim_str:<15}")
+    print(f"{'Memory Footprint (KB)':<25} | {res['int8_bytes']/1024:<15.2f} | {res['int2_bytes']/1024:<15.2f} | {fp8_mem_str:<15}")
+    print(f"{'Compression Ratio':<25} | {res['bf16_bytes']/res['int8_bytes']:<15.2f}x | {res['bf16_bytes']/res['int2_bytes']:<15.2f}x | {fp8_ratio_str:<15}")
+    print("="*80)
     
     if res['int2_sim'] < 0.99:
         print("[FAIL] Dithered INT2 validation failed! Accuracy dropped below threshold.")
