@@ -59,7 +59,7 @@ For full architectural context on the SGLang shadow cache integration, see [ADR-
 
 ASH-KV is currently integrated with **SGLang** - Validated natively on **AMD MI300X** instances (ROCm 7.0+) and Google Colab (T4).
 
-- **Codecs:** BF16 (identity), INT8 and INT4 (highly optimized, model-agnostic Triton kernels with per-token scaling).
+- **Codecs:** BF16 (identity), INT8 (Triton kernel), and the cutting-edge **Generalized N-Bit Dithered Codec** (supports INT2, INT4, INT8 dynamically utilizing Per-Channel Group Quantization, 3-Sigma Outlier Isolation, and DSP Stochastic Dithering for near-lossless fidelity at up to 8x compression).
 - **Telemetry:** Vectorized `PageTable` indexing utilizing O(1) NumPy array lookups (no Python loops in the hot path).
 - **Integration:** SGLang `RadixCache` proxy patch. Atomic `promote_hook` and `demote_hook` intercept preemptions at the node level to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
 
@@ -140,6 +140,8 @@ ASH-KV is built to be lightweight.
 |---------|-------------|
 | `pytest tests/` | Run the full unit test suite (codecs, telemetry, safety guards) |
 | `pytest tests/test_codecs_and_telemetry.py -v` | Run specifically the Triton codec roundtrip tests |
+| `python tests/simulator.py` | Run the mathematical E2E validator proving ASH-KV state machine logic |
+| `python tests/stress_test_nbit.py` | Run the Adversarial N-Bit Validation proving 3-Sigma Outlier Isolation against 50x spikes |
 
 ---
 
