@@ -75,7 +75,7 @@ For full architectural context on the SGLang shadow cache integration, see [ADR-
 
 ## Current Status
 
-ASH-KV is currently integrated with **SGLang** - Validated natively on **AMD MI300X** instances (ROCm 7.0+) and Google Colab (T4).
+ASH-KV is currently integrated with **SGLang** - Validating natively on **AMD MI300X** instances (ROCm 7.0+) and Google Colab (T4).
 
 - **Codecs:** BF16 (identity), INT8 (Triton kernel). The generalized N-bit dithered codec exhibits the expected monotonic tradeoff between compression ratio and reconstruction fidelity across the evaluated precisions (INT2, INT4, INT8).
 - **Telemetry:** Vectorized `PageTable` indexing utilizing O(1) NumPy array lookups (no Python loops in the hot path).
@@ -157,7 +157,7 @@ ASH-KV is built to be lightweight.
 ASH-KV is currently transitioning from a mathematically proven prototype to a production-ready system. 
 
 1. **Python vs. Triton (N-Bit Codecs):** The generalized N-Bit Dithered codec (INT4, INT2) with 3-Sigma Outlier Isolation is currently a pure-PyTorch mathematical reference implementation. While it achieves the `0.9947` cosine similarity guarantees, it needs to be ported to a fused Triton kernel (like our INT8 codec) to achieve acceptable production throughput.
-2. **Upstream Integration:** We have built the interception hooks (`promote_hook`, `demote_hook`) and validated the state machine in the E2E simulator, but this is not yet merged natively into SGLang's `RadixCache` or vLLM's `PagedAttention`. It currently runs as a proxy wrapper.
+2. **Upstream Integration:** We have built the interception hooks (`promote_hook`, `demote_hook`) and are validating the state machine in the E2E simulator, but this is not yet merged natively into SGLang's `RadixCache` or vLLM's `PagedAttention`. It currently runs as a proxy wrapper.
 3. **Dynamic Computation Overhead:** Calculating `mean` and `std` per-channel for the 3-Sigma outlier isolation introduces compute overhead. While memory is saved, the compute-bound latency of this step under massive concurrent batch sizes still needs to be profiled on hardware.
 
 ---
