@@ -59,7 +59,7 @@ For full architectural context on the SGLang shadow cache integration, see [ADR-
 
 ASH-KV is currently integrated with **SGLang** - Validated natively on **AMD MI300X** instances (ROCm 7.0+) and Google Colab (T4).
 
-- **Codecs:** BF16 (identity), INT8 (Triton kernel), and the cutting-edge **Generalized N-Bit Dithered Codec** (supports INT2, INT4, INT8 dynamically utilizing Per-Channel Group Quantization, 3-Sigma Outlier Isolation, and DSP Stochastic Dithering for near-lossless fidelity at up to 8x compression).
+- **Codecs:** BF16 (identity), INT8 (Triton kernel). The generalized N-bit dithered codec exhibits the expected monotonic tradeoff between compression ratio and reconstruction fidelity across the evaluated precisions (INT2, INT4, INT8).
 - **Telemetry:** Vectorized `PageTable` indexing utilizing O(1) NumPy array lookups (no Python loops in the hot path).
 - **Integration:** SGLang `RadixCache` proxy patch. Atomic `promote_hook` and `demote_hook` intercept preemptions at the node level to seamlessly encode/decode KV blocks directly via GPU tensors, eliminating PCIe overhead.
 
