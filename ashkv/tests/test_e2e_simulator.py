@@ -1,6 +1,6 @@
 import pytest
 import torch
-from tests.simulator import E2ESimulator
+from ashkv.tests.simulator import E2ESimulator
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="E2E Simulator requires a CUDA GPU to run Triton codecs and attention math.")
 def test_undeniable_validation_simulator():
