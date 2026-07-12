@@ -157,8 +157,9 @@ ASH-KV is built to be lightweight.
 ASH-KV is currently transitioning from a mathematically proven prototype to a production-ready system. 
 
 1. **Python vs. Triton (N-Bit Codecs):** The generalized N-Bit Dithered codec (INT4, INT2) with 3-Sigma Outlier Isolation is currently a pure-PyTorch mathematical reference implementation. While it achieves the `0.9947` cosine similarity guarantees, it needs to be ported to a fused Triton kernel (like our INT8 codec) to achieve acceptable production throughput.
-2. **Upstream Integration:** We have built the interception hooks (`promote_hook`, `demote_hook`) and are validating the state machine in the E2E simulator, but this is not yet merged natively into SGLang's `RadixCache` or vLLM's `PagedAttention`. It currently runs as a proxy wrapper.
-3. **Dynamic Computation Overhead:** Calculating `mean` and `std` per-channel for the 3-Sigma outlier isolation introduces compute overhead. While memory is saved, the compute-bound latency of this step under massive concurrent batch sizes still needs to be profiled on hardware.
+2. **FP8 Scaffold:** The FP8 codec is currently a pure-Python NumPy fallback used for mathematical validation. Native hardware support using `torch.float8_e4m3fn` (for Hopper/MI300X) is scaffolded but not yet wired into the hot-path, meaning FP8 encoding/decoding will currently incur massive CPU-GPU transfer latency.
+3. **Upstream Integration:** We have built the interception hooks (`promote_hook`, `demote_hook`) and are validating the state machine in the E2E simulator, but this is not yet merged natively into SGLang's `RadixCache` or vLLM's `PagedAttention`. It currently runs as a proxy wrapper.
+4. **Dynamic Computation Overhead:** Calculating `mean` and `std` per-channel for the 3-Sigma outlier isolation introduces compute overhead. While memory is saved, the compute-bound latency of this step under massive concurrent batch sizes still needs to be profiled on hardware.
 
 ---
 
