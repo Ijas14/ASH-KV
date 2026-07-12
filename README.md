@@ -6,6 +6,24 @@ Built on a strict cold/hot boundary: configuration is interpreted at startup, in
 
 ---
 
+## Validation
+
+| Codec | Cosine Similarity | Compression Ratio | Latency |
+|---|---|---|---|
+| INT8 (Triton) | 0.99999 | 1.94x | 6ms / 1.4ms |
+| INT4 (Dithered) | 0.99954 | 3.19x | — |
+| INT2 (Dithered) | 0.99470 | 6.25x | — |
+
+**Adversarial stress test (50x outlier injection):**
+- INT2 maintained `0.9907` similarity, `5.30x` compression
+- 3-sigma outlier isolation caught `5,648` outliers
+
+**E2E simulator proved controller targets cold tokens:**
+- Global avg saliency: `8.0`
+- Evicted tokens saliency: `2.6` (3x lower)
+
+---
+
 ## The Problem
 
 When an LLM serves concurrent requests, the KV cache grows until it hits the GPU memory limit. When it hits the limit, serving engines like SGLang crash (OOM) or forcefully preempt sequences (recompute/swap), causing massive latency spikes.
