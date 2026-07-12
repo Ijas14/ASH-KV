@@ -76,11 +76,12 @@ class TestINT8Codec:
 
 class TestFP8Codec:
     def test_roundtrip(self) -> None:
-        import numpy as np
+        import torch
 
         codec = FP8Codec()
-        arr = np.random.RandomState(42).randn(128).astype(np.float16) * 10
-        data = arr.tobytes()
+        torch.manual_seed(42)
+        arr = torch.randn(128, dtype=torch.bfloat16) * 10
+        data = arr.cpu().view(torch.int16).numpy().tobytes()
 
         encoded = codec.encode(data)
         decoded = codec.decode(encoded)
