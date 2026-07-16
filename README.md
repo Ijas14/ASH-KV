@@ -75,7 +75,7 @@ For full architectural context on the SGLang shadow cache integration, see [ADR-
 
 ## Current Status
 
-ASH-KV is currently integrated with **SGLang** - Validating natively on **AMD MI300X** instances (ROCm 7.0+) and Google Colab (T4).
+ASH-KV is currently integrating with **SGLang** - Validating natively on **AMD MI300X** instances (ROCm 7.0+) and Google Colab (T4).
 
 - **Codecs:** BF16 (identity), INT8 (Triton kernel). The generalized N-bit dithered codec exhibits the expected monotonic tradeoff between compression ratio and reconstruction fidelity across the evaluated precisions (INT2, INT4, INT8).
 - **Telemetry:** Vectorized `PageTable` indexing utilizing O(1) NumPy array lookups (no Python loops in the hot path).
