@@ -20,13 +20,7 @@ from .int4 import INT4Codec
 from .int8 import INT8Codec
 from .int2_dithered import DitheredINT2Codec
 from .nbit_dithered import DitheredNBitCodec
-from .mock import (
-    MockCorruptCodec,
-    MockFailingCodec,
-    MockFP8Codec,
-    MockINT4Codec,
-    MockINT8Codec,
-)
+
 from ashkv.compiler.registry import codec_registry
 
 # Register actual codecs
@@ -37,12 +31,7 @@ codec_registry.register("int2_dithered", DitheredINT2Codec())
 codec_registry.register("nbit_dithered", DitheredNBitCodec())
 codec_registry.register("fp8_default", FP8Codec())
 
-# Register mock codecs for testing
-codec_registry.register("mock_int8", MockINT8Codec())
-codec_registry.register("mock_fp8", MockFP8Codec())
-codec_registry.register("mock_int4", MockINT4Codec())
-codec_registry.register("mock_corrupt", MockCorruptCodec())
-codec_registry.register("mock_fail", MockFailingCodec())
+
 
 __all__ = [
     "BF16Codec",
@@ -52,9 +41,4 @@ __all__ = [
     "DitheredINT2Codec",
     "DitheredNBitCodec",
     "checksum",
-    "MockFP8Codec",
-    "MockINT8Codec",
-    "MockINT4Codec",
-    "MockFailingCodec",
-    "MockCorruptCodec",
 ]

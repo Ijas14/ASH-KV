@@ -146,6 +146,9 @@ def attempt_bf16_recovery(
             error="commit rejected (pin race)",
         )
 
+    if isinstance(page_handle_lookup, dict):
+        page_handle_lookup[page_id] = target_handle
+
     # 6. Free the old corrupt handle
     if old_handle >= 0:
         _safe_free(allocator, old_handle)

@@ -144,38 +144,11 @@ def compile_telemetry(enabled: bool) -> TelemetryFn:
             pass
         return noop_telemetry
 
-    # Real telemetry: increment counters. The counters object is
-    # owned by the integration layer; here we just hold a reference.
-    # For now, we keep a simple internal counter dict.
-    counters: dict[str, int] = {
-        "migrations_ok": 0,
-        "migrations_failure": 0,
-        "migrations_skipped": 0,
-        "migrations_corrupt": 0,
-        "migrations_fallback": 0,
-    }
+    from ..telemetry.counters import counters
 
     def real_telemetry(result: MigrationResult) -> None:
-        # Map status to counter name. Single branch, one function call.
-        key = {
-            # MigrationStatus.OK
-            0: "migrations_ok",
-            # MigrationStatus.SKIPPED
-            1: "migrations_skipped",
-            # MigrationStatus.FAILURE
-            2: "migrations_failure",
-            # MigrationStatus.FALLBACK
-            3: "migrations_fallback",
-            # MigrationStatus.CORRUPT
-            4: "migrations_corrupt",
-        }.get(int(result.status), "migrations_failure")
-        counters[key] = counters.get(key, 0) + 1
+        counters.record_migration(int(result.status))
 
-    # Stash the counters on the function object for the integration
-    # layer to read. This is the one allowed bit of "state" — but
-    # it's cold-path state (read by the metrics exporter, not by the
-    # hot path).
-    real_telemetry.counters = counters  # type: ignore[attr-defined]
     return real_telemetry
 
 

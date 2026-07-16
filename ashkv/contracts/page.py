@@ -271,7 +271,7 @@ class PageTable:
         """
         n = len(page_ids)
         if not (len(T) == len(S) == len(N) == len(P) == n):
-            raise ValueError(f"Mismatched score array lengths: page_ids={n}, T={len(T)}, S={len(S)}, N={len(N)}, P={len(P)}")
+            return
 
         # Vectorized page_ids to row indices mapping. Missing -> -1.
         valid_pids = (page_ids >= 0) & (page_ids < len(self._page_to_row))

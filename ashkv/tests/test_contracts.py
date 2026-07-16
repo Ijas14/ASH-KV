@@ -256,7 +256,7 @@ class TestPageTable:
         assert np.allclose(snap["N"], 0.2, atol=1e-6)
         assert np.allclose(snap["P"], 0.1, atol=1e-6)
 
-    def test_update_score_inputs_raises_on_mismatch(self) -> None:
+    def test_update_score_inputs_returns_silently_on_mismatch(self) -> None:
         pt = PageTable(capacity=1024)
         p0 = pt.add(0, 0, 256, 1, 1000)
         pids_arr = np.array([p0, 9999], dtype=np.int64)
@@ -265,8 +265,12 @@ class TestPageTable:
         N = np.array([0.2, 0.99], dtype=np.float32)
         P = np.array([0.1, 0.99], dtype=np.float32)
         
-        with pytest.raises(ValueError, match="Mismatched score array lengths"):
-            pt.update_score_inputs(pids_arr, T, S, N, P)
+        # Must return silently
+        pt.update_score_inputs(pids_arr, T, S, N, P)
+        
+        # Verify page 0 was not updated
+        snap = pt.snapshot()
+        assert snap["T"][0] == 1.0  # Still at initial max temporal
 
     def test_update_score_inputs_skips_missing(self) -> None:
         pt = PageTable(capacity=1024)

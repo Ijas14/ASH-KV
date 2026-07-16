@@ -8,12 +8,14 @@ from ashkv.codecs import (
     FP8Codec,
     INT4Codec,
     INT8Codec,
+    checksum,
+)
+from ashkv.codecs.mock import (
     MockCorruptCodec,
     MockFailingCodec,
     MockFP8Codec,
     MockINT4Codec,
     MockINT8Codec,
-    checksum,
 )
 from ashkv.contracts import Tier
 from ashkv.telemetry import Counters, counters
@@ -219,7 +221,8 @@ class TestCodecResolver:
     def test_resolve_with_mock_codecs(self) -> None:
         from ashkv.compiler import CodecConfig, resolve_codecs
         from ashkv.compiler.registry import CodecRegistry
-        from ashkv.codecs import BF16Codec, MockINT8Codec
+        from ashkv.codecs import BF16Codec
+        from ashkv.codecs.mock import MockINT8Codec
 
         # Set up a registry with mock codecs
         reg = CodecRegistry()
@@ -248,7 +251,8 @@ class TestCodecResolver:
     def test_user_override(self) -> None:
         from ashkv.compiler import CodecConfig, resolve_codecs
         from ashkv.compiler.registry import CodecRegistry
-        from ashkv.codecs import BF16Codec, MockFP8Codec, MockINT8Codec
+        from ashkv.codecs import BF16Codec
+        from ashkv.codecs.mock import MockFP8Codec, MockINT8Codec
 
         reg = CodecRegistry()
         reg.register("bf16_default", BF16Codec())

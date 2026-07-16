@@ -42,7 +42,7 @@ class HealthMonitor:
     _pressure_states: deque = field(default_factory=lambda: deque(maxlen=1000), repr=False)
     _migration_results: deque = field(default_factory=lambda: deque(maxlen=1000), repr=False)
     _fallback_results: deque = field(default_factory=lambda: deque(maxlen=1000), repr=False)
-    _tripped_breakers: int = 0
+    _tripped_breakers: set[str] = field(default_factory=set, repr=False)
     _last_check: float = field(default_factory=time.monotonic, repr=False)
 
     def record_pressure(self, state: PressureState) -> None:
@@ -57,9 +57,9 @@ class HealthMonitor:
         """Record a fallback result level."""
         self._fallback_results.append(level_int)
 
-    def record_tripped_breaker(self) -> None:
+    def record_tripped_breaker(self, codec_name: str = "default") -> None:
         """Record that a circuit breaker tripped."""
-        self._tripped_breakers += 1
+        self._tripped_breakers.add(codec_name)
 
     def compute_health(self) -> HealthState:
         """Compute current system health.
@@ -92,7 +92,7 @@ class HealthMonitor:
                 return HealthState.UNHEALTHY
 
         # Rule 3: pressure or breakers → DEGRADED
-        if self._tripped_breakers > 0:
+        if len(self._tripped_breakers) > 0:
             return HealthState.DEGRADED
 
         if self._pressure_states:
@@ -111,7 +111,7 @@ class HealthMonitor:
             "total_migrations": n,
             "corrupt_count": sum(1 for s in self._migration_results if s == 4),
             "failure_count": sum(1 for s in self._migration_results if s == 2),
-            "tripped_breakers": self._tripped_breakers,
+            "tripped_breakers": len(self._tripped_breakers),
             "health_state": int(self.compute_health()),
         }
 
@@ -120,4 +120,4 @@ class HealthMonitor:
         self._pressure_states.clear()
         self._migration_results.clear()
         self._fallback_results.clear()
-        self._tripped_breakers = 0
+        self._tripped_breakers.clear()
