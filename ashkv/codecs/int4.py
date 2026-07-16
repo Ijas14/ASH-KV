@@ -39,9 +39,10 @@ class INT4Codec:
         """Encode BF16 bytes to INT4 with per-group scaling."""
         self._encode_calls += 1
 
-        arr = np.frombuffer(source_bytes, dtype=np.float16)
-        if len(arr) == 0:
+        if not source_bytes:
             return struct.pack("<I", 0)
+        import torch
+        arr = torch.frombuffer(bytearray(source_bytes), dtype=torch.bfloat16).float().numpy()
 
         gs = self._group_size
         # Pad to multiple of group_size
@@ -68,7 +69,7 @@ class INT4Codec:
         packed = np.zeros(len(flat_u) // 2, dtype=np.uint8)
         packed = (flat_u[::2] << 4) | flat_u[1::2]
 
-        scale_factors = abs_max.flatten().astype(np.float16)
+        scale_factors = torch.from_numpy(abs_max.flatten()).to(torch.bfloat16).view(torch.int16).numpy()
 
         header = struct.pack("<II", num_groups, num_values)
         return header + scale_factors.tobytes() + packed.tobytes()
@@ -88,9 +89,10 @@ class INT4Codec:
         scale_size = num_groups * 2  # float16
         packed_size = num_values // 2
 
-        scale_factors = np.frombuffer(
-            target_bytes[8:8 + scale_size], dtype=np.float16
-        ).reshape(num_groups, 1)
+        import torch
+        scale_factors = torch.frombuffer(
+            bytearray(target_bytes[8:8 + scale_size]), dtype=torch.bfloat16
+        ).float().numpy().reshape(num_groups, 1)
         packed = np.frombuffer(
             target_bytes[8 + scale_size:8 + scale_size + packed_size],
             dtype=np.uint8,
@@ -104,9 +106,10 @@ class INT4Codec:
         flat[1::2] = low
 
         int4_vals = flat.reshape(num_groups, gs)
-        bf16_vals = int4_vals.astype(np.float16) * scale_factors / 7.0
+        bf16_vals = int4_vals.astype(np.float32) * scale_factors / 7.0
 
-        return bf16_vals.flatten()[:num_values].tobytes()
+        bf16_flat = bf16_vals.flatten()[:num_values]
+        return torch.from_numpy(bf16_flat).to(torch.bfloat16).view(torch.int16).numpy().tobytes()
 
     def checksum(self, raw_bytes: bytes) -> int:
         """Stable checksum."""

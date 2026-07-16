@@ -20,7 +20,7 @@ and reports the outcome.
 from __future__ import annotations
 
 import time
-from typing import Callable
+from typing import Callable, Any
 
 from ..contracts.page import PageTable
 from ..contracts.protocols import Allocator, Codec

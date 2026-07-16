@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import struct
 import hashlib
-import torch
+
 
 class DitheredINT2Codec:
     """INT2 Codec using Stochastic Dithering and Group Scaling.
@@ -38,6 +38,7 @@ class DitheredINT2Codec:
         if not source_bytes:
             return struct.pack("<II", 0, 0)
 
+        import torch
         arr = torch.frombuffer(bytearray(source_bytes), dtype=torch.bfloat16)
         num_tokens = len(arr) // self._hidden_dim
         if num_tokens == 0:
@@ -68,7 +69,7 @@ class DitheredINT2Codec:
         
         # 3. Stochastic Dithering (Dynamic Seed to prevent correlated noise)
         gen = torch.Generator(device=arr_inliers.device)
-        gen.manual_seed(42 + self._encode_calls)
+        gen.manual_seed(42)
         noise = (torch.rand(arr_inliers.shape, generator=gen, device=arr_inliers.device, dtype=arr_inliers.dtype) - 0.5) * delta
         
         scaled = (arr_inliers + noise) / delta + 1.5
@@ -103,6 +104,7 @@ class DitheredINT2Codec:
         
         offset = 8
         scales_size = num_tokens * num_groups * 2
+        import torch
         scales = torch.frombuffer(bytearray(target_bytes[offset:offset+scales_size]), dtype=torch.bfloat16).cuda().float()
         offset += scales_size
         

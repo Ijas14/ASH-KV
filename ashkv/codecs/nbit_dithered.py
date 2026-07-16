@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import struct
 import hashlib
-import torch
-import torch.nn.functional as F
+
 
 class DitheredNBitCodec:
     """N-Bit Codec using Stochastic Dithering and Group Scaling.
@@ -46,6 +45,8 @@ class DitheredNBitCodec:
         if not source_bytes:
             return struct.pack("<II", 0, 0)
 
+        import torch
+        import torch.nn.functional as F
         arr = torch.frombuffer(bytearray(source_bytes), dtype=torch.bfloat16)
         num_tokens = len(arr) // self._hidden_dim
         if num_tokens == 0:
@@ -121,6 +122,7 @@ class DitheredNBitCodec:
         
         offset = 8
         scales_size = num_tokens * num_groups * 2
+        import torch
         scales = torch.frombuffer(bytearray(target_bytes[offset:offset+scales_size]), dtype=torch.bfloat16).cuda().float()
         offset += scales_size
         
